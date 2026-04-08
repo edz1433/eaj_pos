@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -l \"goods_received_notes\\\\|grn_items\\\\|purchases\" c:/xampp/htdocs/pos/database/migrations/*.php)",
+      "Bash(php artisan:*)",
+      "Bash(findstr \"purchase\")",
+      "Bash(grep -n \"notes\\\\|expected_cash\\\\|system_total\\\\|opening_cash\\\\|counted_by\\\\|counted_at\" c:/xampp/htdocs/pos/database/migrations/*petty_cash_voucher*)",
+      "Bash(grep -rn \"notes\\\\|expected_cash\\\\|system_total\\\\|opening_cash\\\\|counted_by\\\\|counted_at\" c:/xampp/htdocs/pos/database/migrations/*cash_count*)",
+      "Bash(grep -n \"notes\" c:/xampp/htdocs/pos/database/migrations/*petty_cash_voucher*)",
+      "Bash(npm run:*)",
+      "Bash(grep -E \"\\\\.\\(php|sql\\)$\")",
+      "Bash(find /c/xampp/htdocs/pos/resources/js -name *Layout* -o -name *Admin* -o -name *Nav*)",
+      "Bash(wc -l /c/xampp/htdocs/pos/database/migrations/*.php)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -n \"->label\\\\|\\\\$t->label\\\\|\\\\$table->label\" /c/xampp/htdocs/pos/app/Http/Controllers/PosController.php)",
+      "Bash(xargs cat:*)",
+      "Bash(find c:xampphtdocspos/resources/views -type f -name *.blade.php)",
+      "Bash(find c:xampphtdocspos -path */resources/views/* -name *.blade.php -o -path */resources/views/* -name *.jsx -o -path */resources/views/* -name *.vue)",
+      "Bash(find c:xampphtdocspos/resources -type f \\\\\\(-name *.jsx -o -name *.tsx -o -name *.js -o -name *.ts \\\\\\))",
+      "Bash(find c:xampphtdocspos/resources/js -name *date* -o -name *Date*)",
+      "Bash(php -r \"require ''vendor/autoload.php''; require ''bootstrap/app.php''; require ''routes/web.php'';\")",
+      "Bash(php -l app/Http/Controllers/InstallmentController.php)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}
