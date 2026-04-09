@@ -44,7 +44,7 @@ function Providers({ children }: { children: React.ReactNode }) {
 const appName = import.meta.env.VITE_APP_NAME || 'PSIS Admin';
 
 createInertiaApp({
-  title: (title) => (title ? `${title} - ${appName}` : appName),
+  title: (title) => title || appName,
 
   resolve: (name) =>
     resolvePageComponent(
