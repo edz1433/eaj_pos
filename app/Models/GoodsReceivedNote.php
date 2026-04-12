@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Models\WarehouseStock;
 
 class GoodsReceivedNote extends Model
 {
@@ -34,6 +35,8 @@ class GoodsReceivedNote extends Model
         'check_number',
         'paid_at',
         'source',
+        'dest_type',
+        'dest_id',
     ];
 
     protected $casts = [
@@ -100,27 +103,41 @@ class GoodsReceivedNote extends Model
         DB::transaction(function () use ($confirmedByUserId) {
             $this->loadMissing('items');
 
+            $destType = $this->dest_type ?? 'branch';
+            $destId   = $this->dest_id   ?? $this->branch_id;
+
             foreach ($this->items as $item) {
                 if ($item->accepted_qty <= 0) continue;
 
-                $stock = ProductStock::firstOrCreate(
-                    ['product_id' => $item->product_id, 'branch_id' => $this->branch_id],
-                    [
-                        'stock'      => 0,
-                        'capital'    => $item->unit_cost,
-                        'markup'     => 0,
-                        'price'      => $item->unit_cost,
-                        'updated_by' => $confirmedByUserId,
-                    ]
-                );
-
-                $stock->increment('stock', $item->accepted_qty);
-
-                // Update capital — price is auto-recalculated by ProductStock boot
-                $stock->update([
-                    'capital'    => $item->unit_cost,
-                    'updated_by' => $confirmedByUserId,
-                ]);
+                if ($destType === 'warehouse') {
+                    // ── Stock goes into a warehouse ───────────────────────
+                    $stock = WarehouseStock::firstOrCreate(
+                        ['product_id' => $item->product_id, 'warehouse_id' => $destId],
+                        [
+                            'stock'      => 0,
+                            'capital'    => $item->unit_cost,
+                            'markup'     => 0,
+                            'price'      => $item->unit_cost,
+                            'updated_by' => $confirmedByUserId,
+                        ]
+                    );
+                    $stock->increment('stock', $item->accepted_qty);
+                    $stock->update(['capital' => $item->unit_cost, 'updated_by' => $confirmedByUserId]);
+                } else {
+                    // ── Stock goes into a branch ──────────────────────────
+                    $stock = ProductStock::firstOrCreate(
+                        ['product_id' => $item->product_id, 'branch_id' => $destId],
+                        [
+                            'stock'      => 0,
+                            'capital'    => $item->unit_cost,
+                            'markup'     => 0,
+                            'price'      => $item->unit_cost,
+                            'updated_by' => $confirmedByUserId,
+                        ]
+                    );
+                    $stock->increment('stock', $item->accepted_qty);
+                    $stock->update(['capital' => $item->unit_cost, 'updated_by' => $confirmedByUserId]);
+                }
             }
 
             $this->update([

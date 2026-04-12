@@ -1,13 +1,14 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Head, usePage, router } from "@inertiajs/react";
 import AdminLayout from "@/layouts/AdminLayout";
 import { routes } from "@/routes";
 import { cn } from "@/lib/utils";
 import {
     Settings, Globe, ShoppingCart, Receipt, Package,
-    Banknote, Bell, Layers, ChevronDown, Lock,
+    Banknote, Bell, Layers, ChevronDown,
     CheckCircle2, XCircle, AlertTriangle, Save,
     RotateCcw, Shield, Sparkles, Zap, Crown, Palette,
+    Upload, ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -55,34 +56,37 @@ const PRESETS: Record<string, {
         label: "Standard",
         icon: Zap,
         color: "text-blue-500 bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20",
-        description: "POS, Sales History, Products, Cash Management, Basic Reports, Users, System Settings",
+        description: "POS, Sales History, Products, Inventory, Stock Count, Cash Management, Basic Reports, Users, System Settings",
         // 1=Dashboard, 2=POS, 3=Sales History, 6=Products, 7=Categories,
         // 14=Cash Sessions, 15=Cash Counts, 16=Petty Cash, 17=Expenses,
         // 18=Daily Summary, 19=Sales Report, 20=Inventory Report,
         // 22=Activity Logs, 23=Users, 27=Expense Categories, 28=System Settings
-        ids: ["1","2","3","6","7","14","15","16","17","18","19","20","22","23","27","28"],
+        // 33=Inventory, 36=Stock Count
+        ids: ["1","2","3","6","7","14","15","16","17","18","19","20","22","23","27","28","33","36"],
         aiChat: false,
     },
     Advance: {
         label: "Advance",
         icon: Sparkles,
         color: "text-emerald-500 bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20",
-        description: "Standard + Purchase Orders, Losses/Damages, All Reports, Suppliers, Promos, AI Assistant",
+        description: "Standard + Purchase Orders, Stock Transfers, Losses/Damages, All Reports, Suppliers, Promos, AI Assistant",
         // Standard + 8=Variants, 9=Bundles, 10=Recipes, 11=Stock Mgmt,
         // 12=Purchase Orders, 13=GRN, 21=Expense Report, 24=Suppliers,
         // 25=Branches, 29=Promos, 30=Ingredient Usage, 31=Losses/Damages, 32=Installments
+        // 33=Inventory, 34=Stock Transfers, 36=Stock Count
         ids: ["1","2","3","6","7","8","9","10","11","12","13","14","15","16","17",
-              "18","19","20","21","22","23","24","25","27","28","29","30","31","32"],
+              "18","19","20","21","22","23","24","25","27","28","29","30","31","32","33","34","36"],
         aiChat: true,
     },
     Premium: {
         label: "Premium",
         icon: Crown,
         color: "text-amber-500 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20",
-        description: "All features — Advance + Shop Orders, Table Orders, Dining Tables",
-        // Advance + 4=Table Orders, 5=Shop Orders, 26=Dining Tables, 32=Installments
+        description: "All features — Advance + Shop Orders, Table Orders, Warehouses, Dining Tables",
+        // Advance + 4=Table Orders, 5=Shop Orders, 26=Dining Tables
+        // 33=Inventory, 34=Stock Transfers, 35=Warehouses, 36=Stock Count
         ids: ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17",
-              "18","19","20","21","22","23","24","25","26","27","28","29","30","31","32"],
+              "18","19","20","21","22","23","24","25","26","27","28","29","30","31","32","33","34","35","36"],
         aiChat: true,
     },
 };
@@ -103,6 +107,60 @@ const GROUP_META: Record<string, { label: string; icon: React.ElementType; desc:
 const inp = "w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20 transition-all";
 const sel = inp + " cursor-pointer";
 
+// ─── Logo upload ──────────────────────────────────────────────────────────────
+
+function LogoUpload({ currentValue, branchId }: { currentValue: string; branchId: number | null }) {
+    const fileRef = useRef<HTMLInputElement>(null);
+    const [uploading, setUploading] = useState(false);
+    const [preview, setPreview] = useState<string | null>(null);
+
+    const logoUrl = preview ?? (currentValue ? `/storage/${currentValue}` : null);
+
+    const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        // Show local preview immediately
+        setPreview(URL.createObjectURL(file));
+        const data = new FormData();
+        data.append("logo", file);
+        if (branchId) data.append("branch_id", String(branchId));
+        setUploading(true);
+        router.post(routes.settings.logo(), data, {
+            forceFormData: true,
+            preserveScroll: true,
+            onFinish: () => setUploading(false),
+        });
+        // Reset so same file can be re-selected
+        e.target.value = "";
+    };
+
+    return (
+        <div className="flex items-center gap-3">
+            {logoUrl ? (
+                <div className="h-10 w-10 rounded-lg border border-border overflow-hidden bg-muted/30 flex items-center justify-center shrink-0">
+                    <img src={logoUrl} alt="Logo" className="h-full w-full object-contain" />
+                </div>
+            ) : (
+                <div className="h-10 w-10 rounded-lg border border-dashed border-border bg-muted/30 flex items-center justify-center shrink-0 text-muted-foreground">
+                    <ImageIcon className="h-4 w-4" />
+                </div>
+            )}
+            <button
+                type="button"
+                disabled={uploading}
+                onClick={() => fileRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {uploading
+                    ? <span className="h-3 w-3 rounded-full border-2 border-muted-foreground/30 border-t-foreground animate-spin" />
+                    : <Upload className="h-3.5 w-3.5" />}
+                {uploading ? "Uploading…" : "Change logo"}
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+        </div>
+    );
+}
+
 // ─── Individual setting row ───────────────────────────────────────────────────
 
 function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
@@ -116,7 +174,14 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
     const isReadonly = def.is_readonly || (def.super_only && !isSuper);
 
     const renderInput = () => {
-        if (def.type === "boolean") {
+        // Detect boolean by value when type is missing/unknown (old DB rows)
+        const resolvedType = def.type || (value === "true" || value === "false" ? "boolean" : "string");
+
+        if (resolvedType === "image") {
+            return <LogoUpload currentValue={value} branchId={branchId} />;
+        }
+
+        if (resolvedType === "boolean") {
             const checked = value === "true";
             return (
                 <button type="button"
@@ -135,7 +200,7 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
             );
         }
 
-        if (def.type === "select" && def.options) {
+        if (resolvedType === "select" && def.options) {
             return (
                 <select value={value} disabled={isReadonly} onChange={e => onChange(e.target.value)} className={cn(sel, "w-48", isReadonly && "opacity-40 cursor-not-allowed")}>
                     {def.options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -143,10 +208,10 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
             );
         }
 
-        if (def.type === "integer" || def.type === "decimal") {
+        if (resolvedType === "integer" || resolvedType === "decimal") {
             return (
                 <input type="number" value={value} disabled={isReadonly}
-                    step={def.type === "decimal" ? "0.01" : "1"}
+                    step={resolvedType === "decimal" ? "0.01" : "1"}
                     onChange={e => onChange(e.target.value)}
                     className={cn(inp, "w-32 text-right tabular-nums", isReadonly && "opacity-40 cursor-not-allowed")} />
             );
@@ -160,15 +225,10 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
     };
 
     return (
-        <div className={cn("flex items-center gap-4 px-5 py-4 transition-colors", isReadonly ? "opacity-60" : "hover:bg-muted/10")}>
+        <div className={cn("flex gap-4 px-5 py-4 transition-colors", def.description ? "items-start" : "items-center", isReadonly ? "opacity-60" : "hover:bg-muted/10")}>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-foreground">{def.label}</p>
-                    {def.super_only && !isSuper && (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-full">
-                            <Lock className="h-2.5 w-2.5" /> Super Admin only
-                        </span>
-                    )}
+                    <p className="text-sm font-medium text-foreground">{def.label || def.key}</p>
                     {def.is_overridden && branchId && (
                         <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded-full">Overridden</span>
                     )}
@@ -180,7 +240,7 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
                     </p>
                 )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className={cn("flex items-center gap-2 shrink-0", def.description && "mt-0.5")}>
                 {renderInput()}
                 {def.is_overridden && branchId && onReset && (
                     <button onClick={onReset} title="Reset to global default"
@@ -310,7 +370,7 @@ function GroupSection({ groupKey, settings, values, onChange, onReset, isSuper, 
     const [open, setOpen] = useState(defaultOpen);
     const meta = GROUP_META[groupKey] ?? { label: groupKey, icon: Settings, desc: "", color: "text-muted-foreground" };
     const Icon = meta.icon;
-    const keys = Object.keys(settings);
+    const keys = Object.keys(settings).filter(k => !settings[k].super_only || isSuper);
     const overriddenCount = keys.filter(k => settings[k].is_overridden).length;
 
     return (
@@ -632,19 +692,23 @@ export default function SettingsIndex() {
                 )}
 
                 {/* ── Setting groups ─────────────────────────────────────────── */}
-                {groupKeys.map((groupKey, i) => (
-                    <GroupSection
-                        key={groupKey}
-                        groupKey={groupKey}
-                        settings={settings[groupKey]}
-                        values={effectiveValues(settings[groupKey])}
-                        onChange={handleChange}
-                        onReset={handleReset}
-                        isSuper={is_super_admin}
-                        branchId={selectedBranch}
-                        defaultOpen={i === 0}
-                    />
-                ))}
+                {groupKeys
+                    .filter(groupKey =>
+                        Object.values(settings[groupKey]).some(def => !def.super_only || is_super_admin)
+                    )
+                    .map((groupKey, i) => (
+                        <GroupSection
+                            key={groupKey}
+                            groupKey={groupKey}
+                            settings={settings[groupKey]}
+                            values={effectiveValues(settings[groupKey])}
+                            onChange={handleChange}
+                            onReset={handleReset}
+                            isSuper={is_super_admin}
+                            branchId={selectedBranch}
+                            defaultOpen={i === 0}
+                        />
+                    ))}
 
                 {/* Floating save bar */}
                 {dirtyCount > 0 && (

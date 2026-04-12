@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Branch;
 use App\Models\CashSession;
 use App\Models\Expense;
+use App\Models\InstallmentPayment;
+use App\Models\InstallmentPlan;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductStock;
@@ -60,8 +62,9 @@ class AiAssistantController extends Controller
             'discount_summary'  => $this->discountSummary($branchId, $currency),
             'hourly_peak'       => $this->hourlyPeak($branchId, $currency),
             'product_count'     => $this->productCount($branchId),
-            'branch_summary'    => $this->branchSummary($currency),
-            default             => $this->unknown(),
+            'branch_summary'      => $this->branchSummary($currency),
+            'installment_summary' => $this->installmentSummary($branchId, $currency),
+            default               => $this->unknown(),
         };
     }
 
@@ -106,6 +109,8 @@ class AiAssistantController extends Controller
         if (preg_match('/\b(expense|expenses|gastos|spent|nagastos|cost.*today)\b/', $msg)) return 'expenses_today';
         // Product / inventory count
         if (preg_match('/\b(how many.*product|product.*count|total.*product|ilang.*product|product.*total|item.*count)\b/', $msg)) return 'product_count';
+        // Installment summary
+        if (preg_match('/\b(installment|instalment|layaway|downpayment|down.?payment|dp.*sale|financing|financed)\b/', $msg)) return 'installment_summary';
         // Branch summary (super admin)
         if (preg_match('/\b(branch|branches|bawat.*branch|branch.*summar|all.*branch)\b/', $msg)) return 'branch_summary';
         // Weekly sales
@@ -123,6 +128,48 @@ class AiAssistantController extends Controller
     private function fmt(float $n, string $currency): string
     {
         return $currency . number_format($n, 2);
+    }
+
+    /**
+     * SQL expression that returns the amount actually collected at POS.
+     * Installment: only the down-payment (payment_amount), not the financed total.
+     * All other methods: use total.
+     */
+    private function collectedExpr(): string
+    {
+        return "SUM(CASE WHEN payment_method = 'installment' THEN payment_amount ELSE total END)";
+    }
+
+    /**
+     * Base query for remittance payments scoped to a branch.
+     * InstallmentPayment joins through installment_plans to get branch_id.
+     */
+    private function remittanceQuery(?int $branchId)
+    {
+        return InstallmentPayment::query()
+            ->join('installment_plans', 'installment_payments.installment_plan_id', '=', 'installment_plans.id')
+            ->when($branchId, fn ($q) => $q->where('installment_plans.branch_id', $branchId));
+    }
+
+    /**
+     * Total remittances received on a given date, broken down by payment method.
+     * Returns ['cash' => 0.0, 'gcash' => 0.0, 'card' => 0.0, 'bank' => 0.0, 'total' => 0.0]
+     */
+    private function remittanceTotals(?int $branchId, string $date): array
+    {
+        $rows = $this->remittanceQuery($branchId)
+            ->whereDate('installment_payments.payment_date', $date)
+            ->selectRaw('installment_payments.payment_method, SUM(installment_payments.amount) as total')
+            ->groupBy('installment_payments.payment_method')
+            ->get();
+
+        $out = ['cash' => 0.0, 'gcash' => 0.0, 'card' => 0.0, 'bank' => 0.0, 'total' => 0.0];
+        foreach ($rows as $r) {
+            $m = $r->payment_method;
+            if (isset($out[$m])) $out[$m] = (float) $r->total;
+            $out['total'] += (float) $r->total;
+        }
+        return $out;
     }
 
     // ── Handlers ───────────────────────────────────────────────────────────────
@@ -156,6 +203,7 @@ class AiAssistantController extends Controller
                 ['label' => '📉 Stock losses',           'value' => '"Show stock losses"'],
                 ['label' => '🛒 Pending orders',         'value' => '"Pending purchase orders"'],
                 ['label' => '💰 Cash session',           'value' => '"Cash session status"'],
+                ['label' => '📅 Installment sales',      'value' => '"Installment summary"'],
                 ['label' => '💸 Expenses today',         'value' => '"Today\'s expenses"'],
                 ['label' => '📋 Monthly expenses',       'value' => '"Monthly expenses"'],
                 ['label' => '❌ Voided sales',           'value' => '"Any voids today?"'],
@@ -170,21 +218,48 @@ class AiAssistantController extends Controller
         $data = Sale::completed()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', now()->startOfDay())
-            ->selectRaw('COUNT(*) as count, SUM(total) as revenue, SUM(discount_amount) as discounts, AVG(total) as avg_txn')
+            ->selectRaw('COUNT(*) as count,
+                ' . $this->collectedExpr() . ' as revenue,
+                SUM(discount_amount) as discounts,
+                SUM(total) as gross_total')
             ->first();
 
         $count = (int) ($data->count ?? 0);
         if ($count === 0) return ['text' => "No completed sales recorded yet today. The day is still young! 💪"];
 
-        return [
-            'text'  => "Here's your sales summary for today (" . now()->format('M d, Y') . "):",
-            'items' => [
-                ['label' => '💰 Total Revenue',        'value' => $this->fmt((float) ($data->revenue ?? 0), $currency)],
-                ['label' => '🧾 Transactions',         'value' => number_format($count)],
-                ['label' => '📊 Avg. per Transaction', 'value' => $this->fmt((float) ($data->avg_txn ?? 0), $currency)],
-                ['label' => '🏷 Total Discounts',      'value' => $this->fmt((float) ($data->discounts ?? 0), $currency)],
-            ],
+        $instData = Sale::completed()
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->where('created_at', '>=', now()->startOfDay())
+            ->where('payment_method', 'installment')
+            ->selectRaw('COUNT(*) as count, SUM(payment_amount) as dp, SUM(total) as financed')
+            ->first();
+
+        $remit    = $this->remittanceTotals($branchId, now()->toDateString());
+        $revenue  = (float) ($data->revenue ?? 0) + $remit['total'];
+        $avgTxn   = $count > 0 ? (float) ($data->revenue ?? 0) / $count : 0;
+
+        $items = [
+            ['label' => '💰 Total Collected',       'value' => $this->fmt($revenue, $currency)],
+            ['label' => '   POS Sales',             'value' => $this->fmt((float) ($data->revenue ?? 0), $currency)],
+            ['label' => '🧾 Transactions',           'value' => number_format($count)],
+            ['label' => '📊 Avg. per Transaction',   'value' => $this->fmt($avgTxn, $currency)],
+            ['label' => '🏷 Total Discounts',        'value' => $this->fmt((float) ($data->discounts ?? 0), $currency)],
         ];
+
+        if ((int) ($instData->count ?? 0) > 0) {
+            $items[] = ['label' => '📅 Installment DP (POS)',     'value' => $this->fmt((float) ($instData->dp ?? 0), $currency), 'badge' => $instData->count . ' txn'];
+            $items[] = ['label' => '   Financed (not collected)', 'value' => $this->fmt((float) ($instData->financed ?? 0) - (float) ($instData->dp ?? 0), $currency), 'badge' => 'On credit'];
+        }
+
+        if ($remit['total'] > 0) {
+            $items[] = ['label' => '🏦 Remittances Received',     'value' => $this->fmt($remit['total'], $currency)];
+            if ($remit['cash']  > 0) $items[] = ['label' => '   Cash',       'value' => $this->fmt($remit['cash'],  $currency)];
+            if ($remit['gcash'] > 0) $items[] = ['label' => '   GCash',      'value' => $this->fmt($remit['gcash'], $currency)];
+            if ($remit['card']  > 0) $items[] = ['label' => '   Card',       'value' => $this->fmt($remit['card'],  $currency)];
+            if ($remit['bank']  > 0) $items[] = ['label' => '   Bank/Check', 'value' => $this->fmt($remit['bank'],  $currency)];
+        }
+
+        return ['text' => "Here's your sales summary for today (" . now()->format('M d, Y') . "):", 'items' => $items];
     }
 
     private function salesYesterday(?int $branchId, string $currency): array
@@ -193,7 +268,7 @@ class AiAssistantController extends Controller
         $data = Sale::completed()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->whereBetween('created_at', [$yesterday->copy()->startOfDay(), $yesterday->copy()->endOfDay()])
-            ->selectRaw('COUNT(*) as count, SUM(total) as revenue, AVG(total) as avg_txn')
+            ->selectRaw('COUNT(*) as count, ' . $this->collectedExpr() . ' as revenue, AVG(total) as avg_txn')
             ->first();
 
         $count = (int) ($data->count ?? 0);
@@ -202,9 +277,9 @@ class AiAssistantController extends Controller
         return [
             'text'  => "Yesterday's sales (" . $yesterday->format('M d, Y') . "):",
             'items' => [
-                ['label' => '💰 Total Revenue',        'value' => $this->fmt((float) ($data->revenue ?? 0), $currency)],
-                ['label' => '🧾 Transactions',         'value' => number_format($count)],
-                ['label' => '📊 Avg. per Transaction', 'value' => $this->fmt((float) ($data->avg_txn ?? 0), $currency)],
+                ['label' => '💰 Total Collected',      'value' => $this->fmt((float) ($data->revenue ?? 0), $currency)],
+                ['label' => '🧾 Transactions',          'value' => number_format($count)],
+                ['label' => '📊 Avg. per Transaction',  'value' => $this->fmt((float) ($data->avg_txn ?? 0), $currency)],
             ],
         ];
     }
@@ -217,7 +292,7 @@ class AiAssistantController extends Controller
         $data = Sale::completed()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->whereBetween('created_at', [$from, $to])
-            ->selectRaw('COUNT(*) as count, SUM(total) as revenue, SUM(discount_amount) as discounts')
+            ->selectRaw('COUNT(*) as count, ' . $this->collectedExpr() . ' as revenue, SUM(discount_amount) as discounts')
             ->first();
 
         $revenue = (float) ($data->revenue ?? 0);
@@ -227,10 +302,10 @@ class AiAssistantController extends Controller
         return [
             'text'  => "This week's sales (" . $from->format('M d') . " – " . now()->format('M d') . "):",
             'items' => [
-                ['label' => '💰 Total Revenue',  'value' => $this->fmt($revenue, $currency)],
-                ['label' => '🧾 Transactions',   'value' => number_format($count)],
-                ['label' => '📊 Daily Average',  'value' => $this->fmt($avgDaily, $currency)],
-                ['label' => '🏷 Discounts',      'value' => $this->fmt((float) ($data->discounts ?? 0), $currency)],
+                ['label' => '💰 Total Collected', 'value' => $this->fmt($revenue, $currency)],
+                ['label' => '🧾 Transactions',    'value' => number_format($count)],
+                ['label' => '📊 Daily Average',   'value' => $this->fmt($avgDaily, $currency)],
+                ['label' => '🏷 Discounts',       'value' => $this->fmt((float) ($data->discounts ?? 0), $currency)],
             ],
         ];
     }
@@ -243,7 +318,7 @@ class AiAssistantController extends Controller
         $data = Sale::completed()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->whereBetween('created_at', [$from, $to])
-            ->selectRaw('COUNT(*) as count, SUM(total) as revenue, SUM(discount_amount) as discounts')
+            ->selectRaw('COUNT(*) as count, ' . $this->collectedExpr() . ' as revenue, SUM(discount_amount) as discounts')
             ->first();
 
         $expenses = (float) Expense::query()
@@ -258,11 +333,11 @@ class AiAssistantController extends Controller
         return [
             'text'  => "Monthly performance — " . now()->format('F Y') . ":",
             'items' => [
-                ['label' => '💰 Total Revenue',  'value' => $this->fmt($revenue, $currency)],
-                ['label' => '🧾 Transactions',   'value' => number_format((int) ($data->count ?? 0))],
-                ['label' => '📊 Daily Average',  'value' => $this->fmt($daysSoFar > 0 ? $revenue / $daysSoFar : 0, $currency)],
-                ['label' => '💸 Total Expenses', 'value' => $this->fmt($expenses, $currency)],
-                ['label' => '📈 Net Income',     'value' => $this->fmt($net, $currency), 'badge' => $net >= 0 ? '▲ Profit' : '▼ Loss'],
+                ['label' => '💰 Total Collected', 'value' => $this->fmt($revenue, $currency)],
+                ['label' => '🧾 Transactions',    'value' => number_format((int) ($data->count ?? 0))],
+                ['label' => '📊 Daily Average',   'value' => $this->fmt($daysSoFar > 0 ? $revenue / $daysSoFar : 0, $currency)],
+                ['label' => '💸 Total Expenses',  'value' => $this->fmt($expenses, $currency)],
+                ['label' => '📈 Net Income',      'value' => $this->fmt($net, $currency), 'badge' => $net >= 0 ? '▲ Profit' : '▼ Loss'],
             ],
         ];
     }
@@ -271,33 +346,63 @@ class AiAssistantController extends Controller
     {
         $today = now()->toDateString();
 
-        $revenue = (float) Sale::completed()
+        $revenueData = Sale::completed()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', now()->startOfDay())
-            ->sum('total');
+            ->selectRaw($this->collectedExpr() . ' as collected,
+                SUM(CASE WHEN payment_method = \'cash\' THEN total ELSE 0 END) as cash_rev,
+                SUM(CASE WHEN payment_method = \'gcash\' THEN total ELSE 0 END) as gcash_rev,
+                SUM(CASE WHEN payment_method = \'card\' THEN total ELSE 0 END) as card_rev,
+                SUM(CASE WHEN payment_method = \'bank\' THEN total ELSE 0 END) as bank_rev,
+                SUM(CASE WHEN payment_method = \'installment\' THEN payment_amount ELSE 0 END) as inst_dp')
+            ->first();
+
+        $revenue = (float) ($revenueData->collected ?? 0);
 
         $expenses = (float) Expense::query()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->whereDate('expense_date', $today)
             ->sum('amount');
 
-        $lossValue = (float) StockAdjustment::query()
+        $lossValue = (float) (StockAdjustment::query()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', now()->startOfDay())
             ->selectRaw('SUM(quantity * unit_cost) as total')
-            ->value('total') ?? 0;
+            ->value('total') ?? 0);
 
-        $net = $revenue - $expenses - $lossValue;
+        $remit = $this->remittanceTotals($branchId, $today);
+        $total = $revenue + $remit['total'];
+        $net   = $total - $expenses - $lossValue;
 
-        return [
-            'text'  => "📈 Today's net income breakdown:",
-            'items' => [
-                ['label' => '💰 Gross Revenue',  'value' => $this->fmt($revenue, $currency)],
-                ['label' => '💸 Expenses',       'value' => '− ' . $this->fmt($expenses, $currency)],
-                ['label' => '📉 Stock Losses',   'value' => '− ' . $this->fmt($lossValue, $currency)],
-                ['label' => '📈 Net Income',     'value' => $this->fmt($net, $currency), 'badge' => $net >= 0 ? '▲ Profit' : '▼ Loss'],
-            ],
+        $items = [
+            ['label' => '💰 Total Collected', 'value' => $this->fmt($total, $currency)],
+            ['label' => '   POS Sales',       'value' => $this->fmt($revenue, $currency)],
         ];
+
+        if ((float) ($revenueData->cash_rev ?? 0) > 0)
+            $items[] = ['label' => '     Cash',           'value' => $this->fmt((float) $revenueData->cash_rev, $currency)];
+        if ((float) ($revenueData->gcash_rev ?? 0) > 0)
+            $items[] = ['label' => '     GCash',          'value' => $this->fmt((float) $revenueData->gcash_rev, $currency)];
+        if ((float) ($revenueData->card_rev ?? 0) > 0)
+            $items[] = ['label' => '     Card',           'value' => $this->fmt((float) $revenueData->card_rev, $currency)];
+        if ((float) ($revenueData->bank_rev ?? 0) > 0)
+            $items[] = ['label' => '     Bank/Check',     'value' => $this->fmt((float) $revenueData->bank_rev, $currency)];
+        if ((float) ($revenueData->inst_dp ?? 0) > 0)
+            $items[] = ['label' => '     Installment DP', 'value' => $this->fmt((float) $revenueData->inst_dp, $currency), 'badge' => 'DP only'];
+
+        if ($remit['total'] > 0) {
+            $items[] = ['label' => '   Remittances',      'value' => $this->fmt($remit['total'], $currency)];
+            if ($remit['cash']  > 0) $items[] = ['label' => '     Cash',       'value' => $this->fmt($remit['cash'],  $currency)];
+            if ($remit['gcash'] > 0) $items[] = ['label' => '     GCash',      'value' => $this->fmt($remit['gcash'], $currency)];
+            if ($remit['card']  > 0) $items[] = ['label' => '     Card',       'value' => $this->fmt($remit['card'],  $currency)];
+            if ($remit['bank']  > 0) $items[] = ['label' => '     Bank/Check', 'value' => $this->fmt($remit['bank'],  $currency)];
+        }
+
+        $items[] = ['label' => '💸 Expenses',    'value' => '− ' . $this->fmt($expenses, $currency)];
+        $items[] = ['label' => '📉 Stock Losses','value' => '− ' . $this->fmt($lossValue, $currency)];
+        $items[] = ['label' => '📈 Net Income',  'value' => $this->fmt($net, $currency), 'badge' => $net >= 0 ? '▲ Profit' : '▼ Loss'];
+
+        return ['text' => "📈 Today's net income breakdown:", 'items' => $items];
     }
 
     private function paymentMix(?int $branchId, string $currency): array
@@ -305,19 +410,46 @@ class AiAssistantController extends Controller
         $rows = Sale::completed()
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', now()->startOfDay())
-            ->selectRaw('payment_method, COUNT(*) as count, SUM(total) as revenue')
+            ->selectRaw('payment_method, COUNT(*) as count,
+                SUM(CASE WHEN payment_method = \'installment\' THEN payment_amount ELSE total END) as collected')
             ->groupBy('payment_method')
-            ->orderByDesc('revenue')
+            ->orderByDesc('collected')
             ->get();
 
         if ($rows->isEmpty()) return ['text' => "No sales yet today to show payment method breakdown."];
 
-        $total = $rows->sum(fn ($r) => (float) $r->revenue);
+        $total = $rows->sum(fn ($r) => (float) $r->collected);
+
+        $labels = [
+            'cash'        => '💵 Cash',
+            'gcash'       => '📱 GCash',
+            'card'        => '💳 Card',
+            'bank'        => '🏦 Bank / Check',
+            'installment' => '📅 Installment (DP)',
+        ];
+
         $items = $rows->map(fn ($r) => [
-            'label' => ucfirst($r->payment_method),
-            'value' => $this->fmt((float) $r->revenue, $currency),
-            'badge' => $r->count . ' txn · ' . ($total > 0 ? round((float) $r->revenue / $total * 100, 1) : 0) . '%',
+            'label' => $labels[$r->payment_method] ?? ucfirst($r->payment_method),
+            'value' => $this->fmt((float) $r->collected, $currency),
+            'badge' => $r->count . ' txn · ' . ($total > 0 ? round((float) $r->collected / $total * 100, 1) : 0) . '%',
         ])->toArray();
+
+        // Add remittance payments (grouped by method)
+        $remit = $this->remittanceTotals($branchId, now()->toDateString());
+        $remitLabels = [
+            'cash'  => '💵 Cash (Remittance)',
+            'gcash' => '📱 GCash (Remittance)',
+            'card'  => '💳 Card (Remittance)',
+            'bank'  => '🏦 Bank/Check (Remittance)',
+        ];
+        foreach (['cash', 'gcash', 'card', 'bank'] as $m) {
+            if ($remit[$m] > 0) {
+                $total += $remit[$m];
+                $items[] = ['label' => $remitLabels[$m], 'value' => $this->fmt($remit[$m], $currency), 'badge' => 'Remit'];
+            }
+        }
+
+        $items[] = ['label' => '📋 Total Collected', 'value' => $this->fmt($total, $currency), 'badge' => 'Total'];
 
         return ['text' => "💳 Today's payment method breakdown:", 'items' => $items];
     }
@@ -455,18 +587,44 @@ class AiAssistantController extends Controller
             return ['text' => $msg];
         }
 
-        $cashier  = $session->user ? "{$session->user->fname} {$session->user->lname}" : '—';
-        $expected = (float) ($session->expected_cash ?? $session->computeExpectedCash());
+        $session->loadMissing(['sales', 'expenses.pettyCashVoucher']);
+        $cashier    = $session->user ? "{$session->user->fname} {$session->user->lname}" : '—';
+        $opening    = (float) $session->opening_cash;
+        $cashSales  = (float) $session->sales()->where('payment_method', 'cash')->where('status', '!=', 'voided')->sum('total');
+        $instDp     = $session->installment_dp_total;
+        $pettyCash  = $session->petty_cash_paid;
+        $gcash      = $session->gcash_sales_total;
+        $card       = $session->card_sales_total;
+        $bank       = (float) $session->sales()->where('payment_method', 'bank')->where('status', '!=', 'voided')->sum('total');
+        $expected   = $session->computeExpectedCash();
 
-        return [
-            'text'  => "✅ Active cash session is open:",
-            'items' => [
-                ['label' => '👤 Cashier',       'value' => $cashier],
-                ['label' => '🕐 Opened At',     'value' => $session->opened_at?->format('g:i A') ?? '—'],
-                ['label' => '💵 Opening Cash',  'value' => $this->fmt((float) $session->opening_cash, $currency)],
-                ['label' => '📊 Expected Cash', 'value' => $this->fmt($expected, $currency)],
-            ],
+        // Remittances received today (cash goes into drawer)
+        $remit = $this->remittanceTotals($session->branch_id, now()->toDateString());
+
+        $items = [
+            ['label' => '👤 Cashier',      'value' => $cashier],
+            ['label' => '🕐 Opened At',    'value' => $session->opened_at?->format('g:i A') ?? '—'],
+            ['label' => '💵 Opening Cash', 'value' => $this->fmt($opening, $currency)],
+            ['label' => '🛒 Cash Sales',   'value' => $this->fmt($cashSales, $currency)],
         ];
+
+        if ($instDp > 0)
+            $items[] = ['label' => '📅 Installment DP',     'value' => $this->fmt($instDp, $currency), 'badge' => 'In drawer'];
+        if ($remit['cash'] > 0)
+            $items[] = ['label' => '🏦 Cash Remittance',    'value' => $this->fmt($remit['cash'], $currency), 'badge' => 'In drawer'];
+        if ($pettyCash > 0)
+            $items[] = ['label' => '💸 Petty Cash Out',     'value' => '− ' . $this->fmt($pettyCash, $currency)];
+
+        $items[] = ['label' => '📊 Expected in Drawer', 'value' => $this->fmt($expected + $remit['cash'], $currency), 'badge' => 'Total'];
+
+        if ($gcash > 0 || $remit['gcash'] > 0)
+            $items[] = ['label' => '📱 GCash (not in drawer)',       'value' => $this->fmt($gcash + $remit['gcash'], $currency)];
+        if ($card > 0 || $remit['card'] > 0)
+            $items[] = ['label' => '💳 Card (not in drawer)',        'value' => $this->fmt($card + $remit['card'], $currency)];
+        if ($bank > 0 || $remit['bank'] > 0)
+            $items[] = ['label' => '🏦 Bank/Check (not in drawer)',  'value' => $this->fmt($bank + $remit['bank'], $currency)];
+
+        return ['text' => "✅ Active cash session is open:", 'items' => $items];
     }
 
     private function expensesToday(?int $branchId, string $currency): array
@@ -585,12 +743,19 @@ class AiAssistantController extends Controller
 
         if ($sales->isEmpty()) return ['text' => "No transactions found yet."];
 
+        $payLabel = [
+            'cash' => 'Cash', 'gcash' => 'GCash', 'card' => 'Card',
+            'bank' => 'Bank', 'installment' => 'Instalment DP',
+        ];
+
         return [
             'text'  => "🕐 Last " . $sales->count() . " transactions:",
             'items' => $sales->map(fn ($s) => [
                 'label' => $s->receipt_number . ' · ' . $s->created_at?->format('g:i A'),
-                'value' => $this->fmt((float) $s->total, $currency),
-                'badge' => ucfirst($s->status),
+                'value' => $s->payment_method === 'installment'
+                    ? $this->fmt((float) $s->payment_amount, $currency)
+                    : $this->fmt((float) $s->total, $currency),
+                'badge' => ($payLabel[$s->payment_method] ?? ucfirst($s->payment_method)) . ' · ' . ucfirst($s->status),
             ])->toArray(),
         ];
     }
@@ -671,7 +836,11 @@ class AiAssistantController extends Controller
 
         $today = now()->startOfDay();
         $items = $branches->map(function ($b) use ($currency, $today) {
-            $revenue = (float) Sale::completed()->where('branch_id', $b->id)->where('created_at', '>=', $today)->sum('total');
+            $revenue = (float) Sale::completed()
+                ->where('branch_id', $b->id)
+                ->where('created_at', '>=', $today)
+                ->selectRaw($this->collectedExpr() . ' as collected')
+                ->value('collected');
             return [
                 'label' => $b->name,
                 'value' => $this->fmt($revenue, $currency),
@@ -680,6 +849,82 @@ class AiAssistantController extends Controller
         })->toArray();
 
         return ['text' => "🏢 Branch sales summary for today:", 'items' => $items];
+    }
+
+    private function installmentSummary(?int $branchId, string $currency): array
+    {
+        // POS installment sales (DP collected at time of sale)
+        $todaySales = Sale::completed()
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->where('payment_method', 'installment')
+            ->where('created_at', '>=', now()->startOfDay())
+            ->selectRaw('COUNT(*) as count, SUM(payment_amount) as dp_total, SUM(total) as financed_total')
+            ->first();
+
+        $monthSales = Sale::completed()
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->where('payment_method', 'installment')
+            ->whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()])
+            ->selectRaw('COUNT(*) as count, SUM(payment_amount) as dp_total, SUM(total) as financed_total')
+            ->first();
+
+        // Remittances received (subsequent payments from financing provider)
+        $todayRemit = $this->remittanceTotals($branchId, now()->toDateString());
+
+        $monthRemit = $this->remittanceQuery($branchId)
+            ->whereBetween('installment_payments.payment_date', [now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString()])
+            ->selectRaw('installment_payments.payment_method, SUM(installment_payments.amount) as total')
+            ->groupBy('installment_payments.payment_method')
+            ->get();
+        $monthRemitTotal = $monthRemit->sum(fn ($r) => (float) $r->total);
+
+        // Active plans
+        $activePlans = InstallmentPlan::query()
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->where('status', 'active')
+            ->selectRaw('COUNT(*) as count, SUM(balance - total_paid) as outstanding')
+            ->first();
+
+        $todayCount = (int) ($todaySales->count ?? 0);
+        $monthCount = (int) ($monthSales->count ?? 0);
+
+        if ($monthCount === 0 && $monthRemitTotal == 0 && (int) ($activePlans->count ?? 0) === 0) {
+            return ['text' => "No installment activity recorded this month."];
+        }
+
+        $items = [];
+
+        // Today's POS DPs
+        if ($todayCount > 0) {
+            $items[] = ['label' => '📅 Today — DP at POS',         'value' => $this->fmt((float) ($todaySales->dp_total ?? 0), $currency), 'badge' => $todayCount . ' new'];
+            $items[] = ['label' => '   Today — Financed Amount',   'value' => $this->fmt((float) ($todaySales->financed_total ?? 0) - (float) ($todaySales->dp_total ?? 0), $currency), 'badge' => 'On credit'];
+        }
+
+        // Today's remittances
+        if ($todayRemit['total'] > 0) {
+            $items[] = ['label' => '🏦 Today — Remittances',       'value' => $this->fmt($todayRemit['total'], $currency)];
+            if ($todayRemit['cash']  > 0) $items[] = ['label' => '   Cash',       'value' => $this->fmt($todayRemit['cash'],  $currency)];
+            if ($todayRemit['gcash'] > 0) $items[] = ['label' => '   GCash',      'value' => $this->fmt($todayRemit['gcash'], $currency)];
+            if ($todayRemit['card']  > 0) $items[] = ['label' => '   Card',       'value' => $this->fmt($todayRemit['card'],  $currency)];
+            if ($todayRemit['bank']  > 0) $items[] = ['label' => '   Bank/Check', 'value' => $this->fmt($todayRemit['bank'],  $currency)];
+        }
+
+        // Month totals
+        if ($monthCount > 0) {
+            $items[] = ['label' => now()->format('M') . ' — DP at POS',       'value' => $this->fmt((float) ($monthSales->dp_total ?? 0), $currency), 'badge' => $monthCount . ' sales'];
+            $items[] = ['label' => now()->format('M') . ' — Total Financed',  'value' => $this->fmt((float) ($monthSales->financed_total ?? 0), $currency)];
+        }
+
+        if ($monthRemitTotal > 0)
+            $items[] = ['label' => now()->format('M') . ' — Remittances',     'value' => $this->fmt($monthRemitTotal, $currency)];
+
+        // Active plans outstanding
+        if ((int) ($activePlans->count ?? 0) > 0) {
+            $items[] = ['label' => '📋 Active Plans',              'value' => number_format((int) $activePlans->count)];
+            $items[] = ['label' => '💳 Outstanding Balance',       'value' => $this->fmt((float) ($activePlans->outstanding ?? 0), $currency), 'badge' => 'Receivable'];
+        }
+
+        return ['text' => "📅 Installment & remittance summary:", 'items' => $items];
     }
 
     private function unknown(): array

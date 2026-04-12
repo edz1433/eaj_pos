@@ -32,12 +32,17 @@ class ProductController extends Controller
         $branchId = $user->branch_id;
 
         // ── Filters from request ───────────────────────────────────────────────
-        $search   = $request->string('search', '')->trim()->toString();
-        $category = $request->integer('category_id') ?: null;
-        $type     = $request->string('type', '')->toString();
-        $status   = $request->string('status', '')->toString();
-        $perPage  = $request->integer('per_page', 24);
-        $perPage  = in_array($perPage, [12, 24, 48, 96]) ? $perPage : 24;
+        $search      = $request->string('search', '')->trim()->toString();
+        $category    = $request->integer('category_id') ?: null;
+        $type        = $request->string('type', '')->toString();
+        $status      = $request->string('status', '')->toString();
+        $perPage     = $request->integer('per_page', 24);
+        $perPage     = in_array($perPage, [12, 24, 48, 96]) ? $perPage : 24;
+
+        // Branch filter: admins default to first branch; non-admins are locked to theirs
+        $branchFilter = $isAdmin
+            ? ($request->integer('branch_id') ?: Branch::orderBy('name')->value('id'))
+            : $branchId;
 
         // ── Products query (paginated) ─────────────────────────────────────────
         // Load full stock rows (price, capital, markup, stock) + the branch name.
@@ -52,13 +57,15 @@ class ProductController extends Controller
             ->withCount('orderItems')
             ->latest();
 
-        // Branch scope for non-admins
+        // Branch scope: non-admins are locked to their branch; admins can filter
         if (! $isAdmin) {
             if (! $branchId) {
                 $query->whereRaw('1 = 0');
             } else {
                 $query->whereHas('stocks', fn($q) => $q->where('branch_id', $branchId));
             }
+        } elseif ($branchFilter) {
+            $query->whereHas('stocks', fn($q) => $q->where('branch_id', $branchFilter));
         }
 
         // Search
@@ -93,10 +100,11 @@ class ProductController extends Controller
         $paginated = $query->paginate($perPage)->withQueryString();
 
         // Map each product in the current page
-        $products = collect($paginated->items())->map(function (Product $product) use ($isAdmin, $branchId) {
-            // Branch-scoped stock record (non-admin users only see their branch).
-            // Admins have no branch_id, so fall back to the first stock record for display.
-            $branchStock  = $branchId ? $product->stocks->firstWhere('branch_id', $branchId) : null;
+        $products = collect($paginated->items())->map(function (Product $product) use ($isAdmin, $branchId, $branchFilter) {
+            // Branch-scoped stock record.
+            // For non-admins: their branch. For admins with a filter: that branch. Otherwise first stock.
+            $effectiveBranchId = $branchFilter ?? $branchId;
+            $branchStock  = $effectiveBranchId ? $product->stocks->firstWhere('branch_id', $effectiveBranchId) : null;
             $displayStock = $branchStock ?? $product->stocks->first();
 
             // Resolve price safely: if the stored price is 0 but capital + markup are set,
@@ -115,6 +123,7 @@ class ProductController extends Controller
                 'name'         => $product->name,
                 'barcode'      => $product->barcode,
                 'product_type' => $product->product_type,
+                'is_taxable'   => (bool) $product->is_taxable,
                 'product_img'  => $product->product_img
                     ? asset('storage/' . $product->product_img)
                     : null,
@@ -169,22 +178,27 @@ class ProductController extends Controller
             $baseStatsQuery->whereHas('stocks', fn($q) => $q->where('branch_id', $branchId));
         } elseif (! $isAdmin) {
             $baseStatsQuery->whereRaw('1 = 0');
+        } elseif ($branchFilter) {
+            $baseStatsQuery->whereHas('stocks', fn($q) => $q->where('branch_id', $branchFilter));
         }
+
+        // Effective branch for per-branch aggregates
+        $effectiveBranchForStats = $branchFilter ?? ($isAdmin ? null : $branchId);
 
         $totalProducts = (clone $baseStatsQuery)->count();
         $totalUnits    = (clone $baseStatsQuery)
             ->join('product_stocks', 'products.id', '=', 'product_stocks.product_id')
-            ->when(! $isAdmin && $branchId, fn($q) => $q->where('product_stocks.branch_id', $branchId))
+            ->when($effectiveBranchForStats, fn($q) => $q->where('product_stocks.branch_id', $effectiveBranchForStats))
             ->sum('product_stocks.stock');
         $lowStock  = (clone $baseStatsQuery)
-            ->whereHas('stocks', function ($q) use ($isAdmin, $branchId) {
+            ->whereHas('stocks', function ($q) use ($effectiveBranchForStats) {
                 $q->where('stock', '>', 0)->where('stock', '<=', 5);
-                if (! $isAdmin && $branchId) $q->where('branch_id', $branchId);
+                if ($effectiveBranchForStats) $q->where('branch_id', $effectiveBranchForStats);
             })->count();
         $outOfStock = (clone $baseStatsQuery)
-            ->whereDoesntHave('stocks', function ($q) use ($isAdmin, $branchId) {
+            ->whereDoesntHave('stocks', function ($q) use ($effectiveBranchForStats) {
                 $q->where('stock', '>', 0);
-                if (! $isAdmin && $branchId) $q->where('branch_id', $branchId);
+                if ($effectiveBranchForStats) $q->where('branch_id', $effectiveBranchForStats);
             })->count();
 
         // ── Variants, Bundles, Recipes — full lists (small, so load all) ────────
@@ -367,6 +381,7 @@ class ProductController extends Controller
                 'type'        => $type,
                 'status'      => $status,
                 'per_page'    => $perPage,
+                'branch_id'   => $branchFilter,
             ],
 
             // ── Summary stats ─────────────────────────────────────────────────
@@ -436,6 +451,7 @@ class ProductController extends Controller
             'stock'        => ['bail', 'required', 'integer', 'min:0'],
             'capital'      => ['bail', 'required', 'numeric', 'min:0'],
             'markup'       => ['bail', 'required', 'numeric', 'min:0', 'max:500'],
+            'is_taxable'   => ['nullable', 'boolean'],
         ]);
 
         $branchId = $isAdmin ? $validated['branch_id'] : $user->branch_id;
@@ -452,6 +468,7 @@ class ProductController extends Controller
                 'barcode'      => $barcode,
                 'category_id'  => $validated['category_id'],
                 'product_type' => $validated['product_type'] ?? 'standard',
+                'is_taxable'   => $validated['is_taxable'] ?? true,
             ]);
 
             // forceFormData sends product_img as the string "null" when no file chosen.
@@ -520,6 +537,7 @@ class ProductController extends Controller
             'stock'        => ['bail', 'required', 'integer', 'min:0'],
             'capital'      => ['bail', 'required', 'numeric', 'min:0'],
             'markup'       => ['bail', 'required', 'numeric', 'min:0', 'max:500'],
+            'is_taxable'   => ['nullable', 'boolean'],
         ]);
 
         $branchId = $isAdmin ? $validated['branch_id'] : $user->branch_id;
@@ -530,6 +548,7 @@ class ProductController extends Controller
                 'barcode'      => $validated['barcode'] ?? $product->barcode,
                 'category_id'  => $validated['category_id'],
                 'product_type' => $validated['product_type'] ?? $product->product_type,
+                'is_taxable'   => $validated['is_taxable'] ?? $product->is_taxable,
             ]);
 
             if ($request->hasFile('product_img') && $request->file('product_img')->isValid()) {

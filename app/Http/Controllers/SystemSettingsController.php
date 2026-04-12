@@ -78,25 +78,33 @@ class SystemSettingsController extends Controller
                 ->keyBy('key')
             : collect();
 
+        // Build a defaults lookup keyed by 'key' so we can fill in missing
+        // label / type / description on old DB rows that predate migrations.
+        $defaults = collect(SystemSetting::defaults())->keyBy('key');
+
         $groups = [];
         foreach ($globalRows as $key => $row) {
             $group = $row->group;
 
-            // Always hide modules group from non-super admins
-            if (! $isSuper && in_array($group, self::SUPER_ADMIN_ONLY_GROUPS)) continue;
+            // Modules group is handled by the dedicated module-toggles UI — never include here.
+            // Also guard by key prefix for old rows that were saved with group = null.
+            if (in_array($group, self::SUPER_ADMIN_ONLY_GROUPS) || str_starts_with($key, 'modules.')) continue;
 
             // When an admin is in global scope (no branch selected), only show
             // the groups they are allowed to configure globally
             if (! $isSuper && ! $branchId && ! in_array($group, self::ADMIN_GLOBAL_GROUPS)) continue;
 
             $override = $branchRows->get($key);
+            $def      = $defaults->get($key, []);
 
             $groups[$group][$key] = [
                 'key'          => $key,
-                'label'        => $row->label,
-                'description'  => $row->description,
-                'type'         => $row->type,
-                'options'      => $row->options ? json_decode($row->options, true) : null,
+                'label'        => $row->label        ?? ($def['label']       ?? $key),
+                'description'  => $row->description  ?? ($def['description'] ?? null),
+                'type'         => $row->type          ?? ($def['type']        ?? 'string'),
+                'options'      => $row->options
+                                    ? json_decode($row->options, true)
+                                    : (isset($def['options']) ? json_decode($def['options'], true) : null),
                 'is_readonly'  => $row->is_readonly,
                 // Super-admin-only keys are read-only for admins even if shown
                 'super_only'   => in_array($key, self::SUPER_ADMIN_ONLY_KEYS)
@@ -221,15 +229,25 @@ class SystemSettingsController extends Controller
         $enabled = $request->input('enabled_menus', []);
         $allIds  = array_keys(MenuHelper::all());
 
-        $changed = [];
+        $menuLabels = MenuHelper::all();
+        $changed    = [];
         foreach ($allIds as $id) {
-            $key      = "modules.menu_{$id}";
+            $key       = "modules.menu_{$id}";
             $isEnabled = in_array((string) $id, array_map('strval', $enabled));
-            $current  = SystemSetting::get($key, null, 'true');
-            $new      = $isEnabled ? 'true' : 'false';
+            $current   = SystemSetting::get($key, null, 'true');
+            $new       = $isEnabled ? 'true' : 'false';
 
             if ((string) $current !== $new) {
-                SystemSetting::set($key, $new, null);
+                // Use updateOrCreate with full metadata so group/type/label are always set
+                SystemSetting::updateOrCreate(
+                    ['key' => $key, 'branch_id' => null],
+                    [
+                        'value'  => $new,
+                        'group'  => 'modules',
+                        'type'   => 'boolean',
+                        'label'  => $menuLabels[$id] ?? $key,
+                    ]
+                );
                 SystemSetting::flushCache(null);
                 $changed[$id] = $new;
             }
@@ -294,11 +312,21 @@ class SystemSettingsController extends Controller
 
     private function getModuleSettings(): array
     {
-        $result = [];
-        foreach (array_keys(MenuHelper::all()) as $id) {
-            $key            = "modules.menu_{$id}";
-            $result[$id]    = SystemSetting::get($key, null, 'true') !== 'false';
+        $menuLabels = MenuHelper::all();
+        $result     = [];
+
+        foreach ($menuLabels as $id => $label) {
+            $key = "modules.menu_{$id}";
+
+            // Repair any existing rows that were saved without group/type/label
+            SystemSetting::where('key', $key)
+                ->whereNull('branch_id')
+                ->where(fn ($q) => $q->whereNull('group')->orWhereNull('type'))
+                ->update(['group' => 'modules', 'type' => 'boolean', 'label' => $label]);
+
+            $result[$id] = SystemSetting::get($key, null, 'true') !== 'false';
         }
+
         return $result;
     }
 }

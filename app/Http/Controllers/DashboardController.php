@@ -8,6 +8,7 @@ use App\Models\Expense;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductStock;
+use App\Models\InstallmentPayment;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockAdjustment;
@@ -104,8 +105,36 @@ class DashboardController extends Controller
             ->whereBetween('expense_date', [$prevFrom->toDateString(), $prevTo->toDateString()]);
 
         // ── KPIs ──────────────────────────────────────────────────────────────
-        $revenue      = (float) Sale::completed()->tap($scopeSales)->sum('total');
-        $prevRevenue  = (float) Sale::completed()->tap($scopePrevSales)->sum('total');
+        // Revenue = cash actually received.
+        // For installment sales only the down payment (payment_amount) was collected at POS;
+        // the rest comes in as provider remittances recorded in installment_payments.
+        // Regular sales: use total (full sale value collected immediately).
+        // Installment sales: use payment_amount (DP only) + remittances received in the period.
+
+        $scopeRemittances = fn($q) => $q
+            ->join('installment_plans', 'installment_payments.installment_plan_id', '=', 'installment_plans.id')
+            ->when($branchId, fn($q) => $q->where('installment_plans.branch_id', $branchId))
+            ->whereBetween('installment_payments.payment_date', [$from->toDateString(), $to->toDateString()]);
+
+        $scopePrevRemittances = fn($q) => $q
+            ->join('installment_plans', 'installment_payments.installment_plan_id', '=', 'installment_plans.id')
+            ->when($branchId, fn($q) => $q->where('installment_plans.branch_id', $branchId))
+            ->whereBetween('installment_payments.payment_date', [$prevFrom->toDateString(), $prevTo->toDateString()]);
+
+        // Regular (non-installment) sales — full total collected
+        $regularRevenue     = (float) Sale::completed()->where('payment_method', '!=', 'installment')->tap($scopeSales)->sum('total');
+        $prevRegularRevenue = (float) Sale::completed()->where('payment_method', '!=', 'installment')->tap($scopePrevSales)->sum('total');
+
+        // Installment sales — only the DP collected at POS
+        $instDpRevenue     = (float) Sale::completed()->where('payment_method', 'installment')->tap($scopeSales)->sum('payment_amount');
+        $prevInstDpRevenue = (float) Sale::completed()->where('payment_method', 'installment')->tap($scopePrevSales)->sum('payment_amount');
+
+        // Provider remittances received in the period
+        $remittanceRevenue     = (float) InstallmentPayment::query()->tap($scopeRemittances)->sum('installment_payments.amount');
+        $prevRemittanceRevenue = (float) InstallmentPayment::query()->tap($scopePrevRemittances)->sum('installment_payments.amount');
+
+        $revenue     = $regularRevenue + $instDpRevenue + $remittanceRevenue;
+        $prevRevenue = $prevRegularRevenue + $prevInstDpRevenue + $prevRemittanceRevenue;
         $txnCount     = Sale::completed()->tap($scopeSales)->count();
         $prevTxnCount = Sale::completed()->tap($scopePrevSales)->count();
         $voidCount    = Sale::voided()->tap($scopeSales)->count();
@@ -145,11 +174,25 @@ class DashboardController extends Controller
         ];
 
         // ── Daily sales trend ─────────────────────────────────────────────────
+        // For installment sales use payment_amount (DP only), not total.
         $dailyRows = Sale::completed()
             ->tap($scopeSales)
-            ->selectRaw("DATE(created_at) as date, SUM(total) as revenue, COUNT(*) as transactions, SUM(discount_amount) as discounts")
+            ->selectRaw("DATE(created_at) as date,
+                SUM(CASE WHEN payment_method = 'installment' THEN payment_amount ELSE total END) as revenue,
+                COUNT(*) as transactions,
+                SUM(discount_amount) as discounts")
             ->groupBy('date')
             ->orderBy('date')
+            ->get()
+            ->keyBy('date');
+
+        // Add daily remittances to the trend
+        $dailyRemitRows = InstallmentPayment::query()
+            ->join('installment_plans', 'installment_payments.installment_plan_id', '=', 'installment_plans.id')
+            ->when($branchId, fn($q) => $q->where('installment_plans.branch_id', $branchId))
+            ->whereBetween('installment_payments.payment_date', [$from->toDateString(), $to->toDateString()])
+            ->selectRaw("payment_date as date, SUM(amount) as remittances")
+            ->groupBy('payment_date')
             ->get()
             ->keyBy('date');
 
@@ -167,7 +210,7 @@ class DashboardController extends Controller
             $d = $cursor->toDateString();
             $dailySales[] = [
                 'date'         => $d,
-                'revenue'      => (float) ($dailyRows[$d]->revenue      ?? 0),
+                'revenue'      => (float) ($dailyRows[$d]->revenue      ?? 0) + (float) ($dailyRemitRows[$d]->remittances ?? 0),
                 'transactions' => (int)   ($dailyRows[$d]->transactions ?? 0),
                 'discounts'    => (float) ($dailyRows[$d]->discounts    ?? 0),
                 'expenses'     => (float) ($dailyExpRows[$d]->expenses  ?? 0),
@@ -180,7 +223,9 @@ class DashboardController extends Controller
         $hourlySales = Sale::completed()
             ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', $today)
-            ->selectRaw("HOUR(created_at) as hour, SUM(total) as revenue, COUNT(*) as transactions")
+            ->selectRaw("HOUR(created_at) as hour,
+                SUM(CASE WHEN payment_method = 'installment' THEN payment_amount ELSE total END) as revenue,
+                COUNT(*) as transactions")
             ->groupBy('hour')
             ->orderBy('hour')
             ->get()

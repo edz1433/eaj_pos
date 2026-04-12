@@ -221,6 +221,39 @@ export const routes = {
         destroy: (id: Id) => route('stock-adjustments.destroy', { stockAdjustment: id }),
     },
 
+    // ── Inventory — ID 33 ────────────────────────────────────────────────────
+    inventory: {
+        index: () => route('inventory.index'),
+    },
+
+    // ── Stock Transfers — ID 34 ───────────────────────────────────────────────
+    stockTransfers: {
+        index:    ()       => route('stock-transfers.index'),
+        store:    ()       => route('stock-transfers.store'),
+        complete: (id: Id) => route('stock-transfers.complete', { stockTransfer: id }),
+        cancel:   (id: Id) => route('stock-transfers.cancel',   { stockTransfer: id }),
+    },
+
+    // ── Warehouses — ID 35 (Premium) ──────────────────────────────────────────
+    warehouses: {
+        index:       ()       => route('warehouses.index'),
+        store:       ()       => route('warehouses.store'),
+        update:      (id: Id) => route('warehouses.update',       { warehouse: id }),
+        toggle:      (id: Id) => route('warehouses.toggle',       { warehouse: id }),
+        destroy:     (id: Id) => route('warehouses.destroy',      { warehouse: id }),
+        adjustStock: (id: Id) => route('warehouses.stock.adjust', { warehouse: id }),
+    },
+
+    // ── Stock Count (Physical Inventory) — ID 36 ─────────────────────────────
+    stockCount: {
+        index:  ()       => route('stock-count.index'),
+        start:  ()       => route('stock-count.start'),
+        show:   (id: Id) => route('stock-count.show',   { session: id }),
+        save:   (id: Id) => route('stock-count.save',   { session: id }),
+        commit: (id: Id) => route('stock-count.commit', { session: id }),
+        cancel: (id: Id) => route('stock-count.cancel', { session: id }),
+    },
+
     // ── Purchase Orders — ID 12 ───────────────────────────────────────────────
     purchaseOrders: {
         index:    ()       => route('purchase-orders.index'),

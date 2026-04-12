@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import {
     Plus, X, Lock, Unlock, Eye, AlertTriangle, RefreshCw,
     Banknote, Smartphone, CreditCard, Tag, TrendingUp,
-    CheckCircle2, XCircle, Clock, ChevronRight,
+    CheckCircle2, XCircle, Clock, ChevronRight, CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDistanceToNow } from "date-fns";
@@ -28,7 +28,12 @@ interface CashSession {
     closed_at: string | null;
     cashier: string;
     // full=true extras
-    cash_sales_total?: number;
+    pure_cash_sales?: number;   // cash method sales only
+    installment_dp?: number;    // installment down-payments collected
+    petty_cash_paid?: number;   // petty cash paid out
+    cash_sales_total?: number;  // net cash in drawer = pure_cash + dp - petty
+    gcash_system?: number;
+    card_system?: number;
     total_sales?: number;
     sale_count?: number;
     computed_expected?: number;
@@ -50,7 +55,8 @@ interface PaginatedHistory {
 }
 
 interface PageProps {
-    open_session:     CashSession | null;
+    open_sessions:    CashSession[];
+    my_session:       CashSession | null;
     history:          PaginatedHistory;
     require_count:    boolean;
     over_short_alert: number;
@@ -171,29 +177,51 @@ function CloseSessionModal({ session, requireCount, overShortAlert, currency, on
     currency: string;
     onClose: () => void;
 }) {
-    const [counted, setCounted] = useState("");
-    const [notes,   setNotes]   = useState(session.notes ?? "");
-    const [loading, setLoading] = useState(false);
-    const [error,   setError]   = useState("");
+    const [counted,      setCounted]      = useState("");
+    const [gcashCounted, setGcashCounted] = useState("");
+    const [cardCounted,  setCardCounted]  = useState("");
+    const [notes,        setNotes]        = useState(session.notes ?? "");
+    const [loading,      setLoading]      = useState(false);
+    const [error,        setError]        = useState("");
 
-    const expected   = session.computed_expected ?? 0;
-    const countedNum = parseFloat(counted) || 0;
-    const overShort  = counted ? countedNum - expected : null;
-    const isAlert    = overShort !== null && Math.abs(overShort) > overShortAlert;
-    const append     = (v: string) => setCounted(p => (p === "0" || p === "") ? v : p + v);
-    const bksp       = ()          => setCounted(p => p.slice(0, -1) || "");
+    const expected      = session.computed_expected ?? 0;
+    const gcashSystem   = session.gcash_system   ?? 0;
+    const cardSystem    = session.card_system    ?? 0;
+    const pureCash      = session.pure_cash_sales ?? 0;
+    const installmentDp = session.installment_dp  ?? 0;
+    const pettyCash     = session.petty_cash_paid ?? 0;
+
+    const countedNum     = parseFloat(counted)      || 0;
+    const gcashCountedNum= parseFloat(gcashCounted)  || 0;
+    const cardCountedNum = parseFloat(cardCounted)   || 0;
+
+    const cashOverShort  = counted      ? countedNum      - expected    : null;
+    const gcashOverShort = gcashCounted ? gcashCountedNum - gcashSystem : null;
+    const cardOverShort  = cardCounted  ? cardCountedNum  - cardSystem  : null;
+
+    const isAlert = cashOverShort !== null && Math.abs(cashOverShort) > overShortAlert;
+    const append  = (v: string) => setCounted(p => (p === "0" || p === "") ? v : p + v);
+    const bksp    = ()          => setCounted(p => p.slice(0, -1) || "");
 
     const handleClose = () => {
         if (requireCount && !counted.trim()) { setError("Enter the counted cash amount."); return; }
         setLoading(true); setError("");
         router.post(routes.cashSessions.close(session.id), {
-            counted_cash: requireCount ? countedNum : undefined,
-            notes: notes || null,
+            counted_cash:  requireCount ? countedNum : undefined,
+            gcash_counted: gcashCounted ? gcashCountedNum : undefined,
+            card_counted:  cardCounted  ? cardCountedNum  : undefined,
+            notes:         notes || null,
         }, {
             preserveScroll: true,
             onSuccess: () => { setLoading(false); onClose(); },
             onError: e  => { setError(Object.values(e)[0] as string ?? "Failed."); setLoading(false); },
         });
+    };
+
+    const OverShortLine = ({ amount, label }: { amount: number; label: string }) => {
+        if (amount === 0) return <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓ {label} balanced</span>;
+        if (amount > 0)   return <span className="text-amber-500 font-bold">+{fmt(Math.abs(amount), currency)} over</span>;
+        return <span className="text-destructive font-bold">{fmt(amount, currency)} short</span>;
     };
 
     return (
@@ -210,83 +238,179 @@ function CloseSessionModal({ session, requireCount, overShortAlert, currency, on
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                    {/* Summary card */}
-                    <div className="bg-muted/30 rounded-2xl p-4 space-y-2 text-sm">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Session Summary</p>
-                        {[
-                            { label: "Opening cash",  val: fmt(session.opening_cash, currency) },
-                            { label: "Cash sales",    val: fmt(session.cash_sales_total ?? 0, currency), em: true },
-                            { label: "Total sales",   val: fmt(session.total_sales ?? 0, currency) },
-                            { label: "Transactions",  val: String(session.sale_count ?? 0) },
-                        ].map(r => (
-                            <div key={r.label} className="flex justify-between">
-                                <span className="text-muted-foreground">{r.label}</span>
-                                <span className={cn("tabular-nums font-medium", r.em ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>{r.val}</span>
+                    <div className="bg-muted/30 rounded-2xl p-4 space-y-1.5 text-sm">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
+                            Expected Cash in Drawer — Breakdown
+                        </p>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Opening cash</span>
+                            <span className="tabular-nums font-medium text-foreground">{fmt(session.opening_cash, currency)}</span>
+                        </div>
+                        <div className="pt-1 pb-0.5">
+                            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wide">+ Cash collected today</p>
+                        </div>
+                        <div className="flex justify-between pl-3">
+                            <span className="text-muted-foreground flex items-center gap-1.5">
+                                <Banknote className="h-3 w-3" /> Cash sales
+                            </span>
+                            <span className="tabular-nums font-medium text-emerald-600 dark:text-emerald-400">+{fmt(pureCash, currency)}</span>
+                        </div>
+                        {installmentDp > 0 && (
+                            <div className="flex justify-between pl-3">
+                                <span className="text-muted-foreground flex items-center gap-1.5">
+                                    <CalendarClock className="h-3 w-3" /> Installment down-payments
+                                    <span className="text-[10px] bg-orange-500/10 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded-full">DP only</span>
+                                </span>
+                                <span className="tabular-nums font-medium text-emerald-600 dark:text-emerald-400">+{fmt(installmentDp, currency)}</span>
                             </div>
-                        ))}
-                        <div className="flex justify-between border-t border-border pt-2 mt-1">
-                            <span className="font-bold text-foreground">Expected cash</span>
-                            <span className="tabular-nums font-black text-primary">{fmt(expected, currency)}</span>
+                        )}
+                        {pettyCash > 0 && (
+                            <div className="flex justify-between pl-3">
+                                <span className="text-muted-foreground">Petty cash paid out</span>
+                                <span className="tabular-nums font-medium text-destructive">−{fmt(pettyCash, currency)}</span>
+                            </div>
+                        )}
+                        {(gcashSystem > 0 || cardSystem > 0) && (
+                            <>
+                                <div className="pt-1 pb-0.5">
+                                    <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wide">Not in drawer (digital / terminal)</p>
+                                </div>
+                                {gcashSystem > 0 && (
+                                    <div className="flex justify-between pl-3 opacity-60">
+                                        <span className="text-muted-foreground flex items-center gap-1.5">
+                                            <Smartphone className="h-3 w-3" /> GCash
+                                        </span>
+                                        <span className="tabular-nums text-muted-foreground">{fmt(gcashSystem, currency)}</span>
+                                    </div>
+                                )}
+                                {cardSystem > 0 && (
+                                    <div className="flex justify-between pl-3 opacity-60">
+                                        <span className="text-muted-foreground flex items-center gap-1.5">
+                                            <CreditCard className="h-3 w-3" /> Card / Bank
+                                        </span>
+                                        <span className="tabular-nums text-muted-foreground">{fmt(cardSystem, currency)}</span>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                        <div className="flex justify-between border-t-2 border-border pt-2.5 mt-2">
+                            <span className="font-bold text-foreground">
+                                Expected in drawer
+                                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                                    (Opening + Cash + DP{pettyCash > 0 ? " − Petty" : ""})
+                                </span>
+                            </span>
+                            <span className="tabular-nums font-black text-primary text-base">{fmt(expected, currency)}</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground/60 pt-0.5">
+                            {session.sale_count ?? 0} transactions · GCash and Card amounts are reconciled separately below
                         </div>
                     </div>
 
-                    {/* Count cash */}
-                    {requireCount ? (
-                        <div className="space-y-3">
-                            <div className={cn("border-2 rounded-2xl px-5 py-4 text-center transition-all",
-                                overShort === null ? "border-border bg-background"
-                                : overShort === 0  ? "border-emerald-500/40 bg-emerald-500/5"
-                                : isAlert          ? "border-destructive/40 bg-destructive/5"
-                                : "border-amber-500/40 bg-amber-500/5")}>
-                                <p className="text-xs text-muted-foreground uppercase tracking-widest mb-1">Counted Cash</p>
-                                <p className={cn("text-4xl font-black tabular-nums",
-                                    overShort === null ? "text-foreground"
-                                    : overShort === 0  ? "text-emerald-600 dark:text-emerald-400"
-                                    : isAlert          ? "text-destructive"
-                                    : "text-amber-500")}>
-                                    {currency}{countedNum.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                                </p>
-                                {overShort !== null && (
-                                    <p className={cn("text-sm font-bold mt-1 tabular-nums",
-                                        overShort === 0 ? "text-emerald-600 dark:text-emerald-400"
-                                        : overShort > 0 ? "text-amber-500" : "text-destructive")}>
-                                        {overShort === 0 ? "✓ Balanced"
-                                        : overShort > 0 ? `+${fmt(overShort, currency)} over`
-                                        : `${fmt(overShort, currency)} short`}
+                    <div>
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                            <Banknote className="h-3.5 w-3.5" /> Count Cash in Drawer
+                        </p>
+                        {requireCount ? (
+                            <div className="space-y-3">
+                                <div className={cn("border-2 rounded-2xl px-5 py-4 text-center transition-all",
+                                    cashOverShort === null ? "border-border bg-background"
+                                    : cashOverShort === 0  ? "border-emerald-500/40 bg-emerald-500/5"
+                                    : isAlert              ? "border-destructive/40 bg-destructive/5"
+                                    : "border-amber-500/40 bg-amber-500/5")}>
+                                    <p className="text-xs text-muted-foreground uppercase tracking-widest mb-1">Counted Cash</p>
+                                    <p className={cn("text-4xl font-black tabular-nums",
+                                        cashOverShort === null ? "text-foreground"
+                                        : cashOverShort === 0  ? "text-emerald-600 dark:text-emerald-400"
+                                        : isAlert              ? "text-destructive"
+                                        : "text-amber-500")}>
+                                        {currency}{countedNum.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
                                     </p>
+                                    {cashOverShort !== null && (
+                                        <p className={cn("text-sm font-bold mt-1 tabular-nums",
+                                            cashOverShort === 0 ? "text-emerald-600 dark:text-emerald-400"
+                                            : cashOverShort > 0 ? "text-amber-500" : "text-destructive")}>
+                                            {cashOverShort === 0 ? "✓ Balanced"
+                                            : cashOverShort > 0 ? `+${fmt(cashOverShort, currency)} over`
+                                            : `${fmt(cashOverShort, currency)} short`}
+                                        </p>
+                                    )}
+                                </div>
+                                {isAlert && (
+                                    <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-600 dark:text-amber-400">
+                                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                                        Over/short exceeds the ₱{overShortAlert.toFixed(2)} alert threshold.
+                                    </div>
+                                )}
+                                {error && <p className="text-xs text-destructive">{error}</p>}
+                                <button onClick={() => setCounted(expected.toFixed(2))}
+                                    className="w-full py-2 rounded-xl border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/5 transition-colors">
+                                    Fill expected ({fmt(expected, currency)})
+                                </button>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {["7","8","9","4","5","6","1","2","3","00","0","⌫"].map(k => (
+                                        <button key={k} onClick={() => k === "⌫" ? bksp() : append(k)}
+                                            className="h-11 rounded-xl border border-border text-sm font-semibold hover:bg-accent hover:border-primary/30 active:scale-95 transition-all">
+                                            {k}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 text-xs text-muted-foreground">
+                                Cash count not required — session will close with expected cash recorded automatically.
+                            </div>
+                        )}
+                    </div>
+
+                    {gcashSystem > 0 && (
+                        <div>
+                            <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                <Smartphone className="h-3.5 w-3.5" /> GCash — Enter Merchant App Total
+                            </p>
+                            <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 space-y-2">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">System GCash total</span>
+                                    <span className="font-bold text-blue-600 dark:text-blue-400 tabular-nums">{fmt(gcashSystem, currency)}</span>
+                                </div>
+                                <input
+                                    type="number" min="0" step="0.01"
+                                    value={gcashCounted}
+                                    onChange={e => setGcashCounted(e.target.value)}
+                                    placeholder={`Enter GCash app total (expected ${fmt(gcashSystem, currency)})`}
+                                    className={inp}
+                                />
+                                {gcashOverShort !== null && (
+                                    <p className="text-xs"><OverShortLine amount={gcashOverShort} label="GCash" /></p>
                                 )}
                             </div>
-
-                            {isAlert && (
-                                <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-600 dark:text-amber-400">
-                                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                                    Over/short exceeds the ₱{overShortAlert.toFixed(2)} alert threshold. Please recount or add a note.
-                                </div>
-                            )}
-
-                            {error && <p className="text-xs text-destructive">{error}</p>}
-
-                            <button onClick={() => setCounted(expected.toFixed(2))}
-                                className="w-full py-2 rounded-xl border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/5 transition-colors">
-                                Fill expected amount ({fmt(expected, currency)})
-                            </button>
-
-                            <div className="grid grid-cols-3 gap-2">
-                                {["7","8","9","4","5","6","1","2","3","00","0","⌫"].map(k => (
-                                    <button key={k} onClick={() => k === "⌫" ? bksp() : append(k)}
-                                        className="h-11 rounded-xl border border-border text-sm font-semibold hover:bg-accent hover:border-primary/30 active:scale-95 transition-all">
-                                        {k}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 text-xs text-muted-foreground">
-                            Cash count not required — session will close with expected cash recorded automatically.
                         </div>
                     )}
 
-                    {/* Notes */}
+                    {cardSystem > 0 && (
+                        <div>
+                            <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                <CreditCard className="h-3.5 w-3.5" /> Card / Bank — Enter Terminal Batch Total
+                            </p>
+                            <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-3 space-y-2">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">System card total</span>
+                                    <span className="font-bold text-purple-600 dark:text-purple-400 tabular-nums">{fmt(cardSystem, currency)}</span>
+                                </div>
+                                <input
+                                    type="number" min="0" step="0.01"
+                                    value={cardCounted}
+                                    onChange={e => setCardCounted(e.target.value)}
+                                    placeholder={`Enter terminal batch total (expected ${fmt(cardSystem, currency)})`}
+                                    className={inp}
+                                />
+                                {cardOverShort !== null && (
+                                    <p className="text-xs"><OverShortLine amount={cardOverShort} label="Card" /></p>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     <div>
                         <label className="block text-xs font-medium text-muted-foreground mb-1.5">Notes (optional)</label>
                         <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
@@ -322,16 +446,19 @@ function ActiveSessionPanel({ session, requireCount, overShortAlert, currency }:
     const [showClose, setShowClose] = useState(false);
     const ago = formatDistanceToNow(new Date(session.opened_at), { addSuffix: false });
 
+    const cashLabel  = (session.installment_dp ?? 0) > 0 ? "Cash + DP" : "Cash Sales";
+    const cashAmount = (session.pure_cash_sales ?? 0) + (session.installment_dp ?? 0);
+
     const stats = [
-        { label: "Opening Cash",  val: session.formatted_opening_cash,           color: "text-foreground",                          icon: Banknote },
-        { label: "Cash Sales",    val: fmt(session.cash_sales_total ?? 0, currency), color: "text-emerald-600 dark:text-emerald-400",  icon: TrendingUp },
-        { label: "Total Sales",   val: fmt(session.total_sales ?? 0, currency),   color: "text-foreground",                          icon: TrendingUp },
-        { label: "Transactions",  val: String(session.sale_count ?? 0),           color: "text-foreground",                          icon: CheckCircle2 },
+        { label: "Opening Cash",   val: session.formatted_opening_cash,         color: "text-foreground",                         icon: Banknote    },
+        { label: cashLabel,        val: fmt(cashAmount, currency),               color: "text-emerald-600 dark:text-emerald-400",  icon: TrendingUp  },
+        { label: "Total Collected",val: fmt(session.total_sales ?? 0, currency), color: "text-foreground",                         icon: TrendingUp  },
+        { label: "Transactions",   val: String(session.sale_count ?? 0),         color: "text-foreground",                         icon: CheckCircle2 },
     ];
 
     return (
         <>
-            <div className="bg-emerald-500/5 border border-emerald-500/25 rounded-2xl overflow-hidden">
+        <div className="bg-emerald-500/5 border border-emerald-500/25 rounded-2xl overflow-hidden">
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-emerald-500/15">
                     <div className="flex items-center gap-3">
@@ -354,10 +481,6 @@ function ActiveSessionPanel({ session, requireCount, overShortAlert, currency }:
                                 <Eye className="h-3.5 w-3.5" /> Details
                             </Button>
                         </Link>
-                        <Button size="sm" className="h-8 gap-1.5 text-xs bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-                            onClick={() => setShowClose(true)}>
-                            <Lock className="h-3.5 w-3.5" /> Close
-                        </Button>
                     </div>
                 </div>
 
@@ -386,16 +509,15 @@ function ActiveSessionPanel({ session, requireCount, overShortAlert, currency }:
                     </span>
                 </div>
             </div>
-
-            {showClose && (
-                <CloseSessionModal
-                    session={session}
-                    requireCount={requireCount}
-                    overShortAlert={overShortAlert}
-                    currency={currency}
-                    onClose={() => setShowClose(false)}
-                />
-            )}
+        {showClose && (
+            <CloseSessionModal
+                session={session}
+                requireCount={requireCount}
+                overShortAlert={overShortAlert}
+                currency={currency}
+                onClose={() => setShowClose(false)}
+            />
+        )}
         </>
     );
 }
@@ -403,7 +525,7 @@ function ActiveSessionPanel({ session, requireCount, overShortAlert, currency }:
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CashSessionsIndex() {
-    const { open_session, history, require_count, over_short_alert, app, flash } =
+    const { open_sessions, my_session, history, require_count, over_short_alert, app, flash } =
         usePage<PageProps>().props;
 
     const currency = app?.currency ?? "₱";
@@ -437,20 +559,22 @@ export default function CashSessionsIndex() {
                     <div>
                         <h1 className="text-xl font-bold text-foreground">Cash Sessions</h1>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            {open_session ? "Session is currently open" : "No active session — open one to start the day"}
+                            {open_sessions.length > 0
+                                ? `${open_sessions.length} active session${open_sessions.length > 1 ? "s" : ""} · ${my_session ? "Your session is open" : "You have no open session"}`
+                                : "No active sessions — open one to start the day"}
                         </p>
                     </div>
-                    {!open_session && (
+                    {!my_session && (
                         <Button className="gap-2 h-9 font-semibold" onClick={() => setShowOpen(true)}>
                             <Plus className="h-4 w-4" /> Open Session
                         </Button>
                     )}
                 </div>
 
-                {/* Active session or empty state */}
-                {open_session ? (
+                {/* My active session */}
+                {my_session ? (
                     <ActiveSessionPanel
-                        session={open_session}
+                        session={my_session}
                         requireCount={require_count}
                         overShortAlert={over_short_alert}
                         currency={currency}
@@ -467,6 +591,32 @@ export default function CashSessionsIndex() {
                         <Button className="gap-2 shrink-0" onClick={() => setShowOpen(true)}>
                             <Unlock className="h-4 w-4" /> Open Session
                         </Button>
+                    </div>
+                )}
+
+                {/* Other open sessions from other cashiers */}
+                {open_sessions.filter(s => s.id !== my_session?.id).length > 0 && (
+                    <div className="space-y-2">
+                        <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Other Open Sessions</p>
+                        {open_sessions.filter(s => s.id !== my_session?.id).map(s => (
+                            <div key={s.id} className="bg-card border border-border rounded-xl px-4 py-3 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                                    <div>
+                                        <p className="text-sm font-semibold text-foreground">{s.cashier}</p>
+                                        <p className="text-xs font-mono text-muted-foreground">{s.session_number}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                    <span>Opening: <strong className="text-foreground">{s.formatted_opening_cash}</strong></span>
+                                    <Link href={routes.cashSessions.show(s.id)}>
+                                        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
+                                            <Eye className="h-3 w-3" /> View
+                                        </Button>
+                                    </Link>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
 

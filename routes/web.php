@@ -28,6 +28,10 @@ use App\Http\Controllers\AiAssistantController;
 use App\Http\Controllers\DiningTableController;
 use App\Http\Controllers\TableOrderController;
 use App\Http\Controllers\InstallmentController;
+use App\Http\Controllers\InventoryController;
+use App\Http\Controllers\StockTransferController;
+use App\Http\Controllers\WarehouseController;
+use App\Http\Controllers\StockCountController;
 
 // PUBLIC
 Route::middleware('guest')->group(function () {
@@ -232,6 +236,39 @@ Route::middleware('auth')->group(function () {
         Route::get('/{installmentPlan}', 'show')->name('show');
         Route::post('/{installmentPlan}/pay', 'pay')->name('pay');
         Route::post('/{installmentPlan}/cancel', 'cancel')->name('cancel');
+    });
+
+    // Inventory — ID 33
+    Route::middleware('access:33')->prefix('inventory')->name('inventory.')->group(function () {
+        Route::get('/', [InventoryController::class, 'index'])->name('index');
+    });
+
+    // Stock Transfers — ID 34
+    Route::middleware('access:34')->prefix('stock-transfers')->name('stock-transfers.')->controller(StockTransferController::class)->group(function () {
+        Route::get('/', 'index')->name('index');
+        Route::post('/', 'store')->name('store');
+        Route::post('/{stockTransfer}/complete', 'complete')->name('complete');
+        Route::post('/{stockTransfer}/cancel', 'cancel')->name('cancel');
+    });
+
+    // Stock Count (Physical Inventory) — ID 36
+    Route::middleware('access:36')->prefix('stock-count')->name('stock-count.')->controller(StockCountController::class)->group(function () {
+        Route::get('/',                      'index')->name('index');
+        Route::post('/start',                'start')->name('start');
+        Route::get('/{session}',             'show')->name('show');
+        Route::patch('/{session}/save',      'save')->name('save');
+        Route::post('/{session}/commit',     'commit')->name('commit');
+        Route::delete('/{session}',          'cancel')->name('cancel');
+    });
+
+    // Warehouses — ID 35 (Premium)
+    Route::middleware('access:35')->prefix('warehouses')->name('warehouses.')->controller(WarehouseController::class)->group(function () {
+        Route::get('/', 'index')->name('index');
+        Route::post('/', 'store')->name('store');
+        Route::patch('/{warehouse}', 'update')->name('update');
+        Route::patch('/{warehouse}/toggle', 'toggle')->name('toggle');
+        Route::delete('/{warehouse}', 'destroy')->name('destroy');
+        Route::post('/{warehouse}/stock', 'adjustStock')->name('stock.adjust');
     });
 
     // Promos

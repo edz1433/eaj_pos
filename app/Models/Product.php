@@ -18,14 +18,17 @@ class Product extends Model
         'category_id',
         'product_img',
         'product_type', // standard | made_to_order | bundle
+        'is_taxable',
     ];
 
     protected $casts = [
         'product_type' => 'string',
+        'is_taxable'   => 'boolean',
     ];
 
     protected $attributes = [
         'product_type' => 'standard',
+        'is_taxable'   => true,
     ];
 
     // ── Relationships ──────────────────────────────────────────────

@@ -77,7 +77,7 @@ class InstallmentController extends Controller
         $validated = $request->validate([
             'amount'         => ['required', 'numeric', 'min:0.01'],
             'payment_date'   => ['required', 'date'],
-            'payment_method' => ['required', 'in:cash,gcash,card'],
+            'payment_method' => ['required', 'in:gcash,card,bank'],
             'notes'          => ['nullable', 'string', 'max:500'],
         ]);
 
@@ -111,7 +111,7 @@ class InstallmentController extends Controller
             $installmentPlan->update([
                 'total_paid'   => $newTotalPaid,
                 'paid_count'   => $newPaidCount,
-                'next_due_date'=> $isFullyPaid ? null : InstallmentPlan::computeNextDue($installmentPlan->interval),
+                'next_due_date'=> $isFullyPaid ? null : now()->addMonth(),
                 'status'       => $isFullyPaid ? 'completed' : 'active',
             ]);
 
@@ -129,9 +129,10 @@ class InstallmentController extends Controller
             ]);
         });
 
+        $provider = InstallmentPlan::PROVIDERS[$installmentPlan->provider] ?? 'Financing';
         return back()->with('message', [
             'type' => 'success',
-            'text' => "Payment of ₱" . number_format($amount, 2) . " recorded successfully.",
+            'text' => "Remittance of ₱" . number_format($amount, 2) . " from {$provider} recorded.",
         ]);
     }
 
@@ -158,6 +159,6 @@ class InstallmentController extends Controller
             'subject_id'   => $installmentPlan->id,
         ]);
 
-        return back()->with('message', ['type' => 'success', 'text' => 'Installment plan cancelled.']);
+        return back()->with('message', ['type' => 'success', 'text' => 'Financing record cancelled.']);
     }
 }

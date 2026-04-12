@@ -77,6 +77,7 @@ interface Product {
     barcode: string | null;
     product_img: string | null;
     product_type: ProductType;
+    is_taxable: boolean;
     category: { id: number; name: string } | null;
     branch_stock: number;
     branch_stock_status: string;
@@ -153,7 +154,7 @@ interface SelectProduct { id: number; name: string; product_type: string; }
 interface PageProps {
     products: Product[];
     pagination: Pagination;
-    filters: { search: string; category_id: number | null; type: string; status: string; per_page: number; };
+    filters: { search: string; category_id: number | null; type: string; status: string; per_page: number; branch_id: number | null; };
     stats: { total_products: number; total_units: number; low_stock: number; out_of_stock: number; };
     variantProducts: VariantProduct[];
     bundleProducts: BundleProduct[];
@@ -362,6 +363,7 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
     const [stock,       setStock]       = useState('0');
     const [capital,     setCapital]     = useState('');
     const [markup,      setMarkup]      = useState('0');
+    const [isTaxable,   setIsTaxable]   = useState(true);
     const [imageFile,   setImageFile]   = useState<File | null>(null);
     const [errors,      setErrors]      = useState<Record<string, string>>({});
     const [processing,  setProcessing]  = useState(false);
@@ -379,6 +381,7 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
             setStock(product?.branch_stock?.toString() ?? '0');
             setCapital(product?.branch_capital?.toString() ?? '');
             setMarkup(product?.branch_markup?.toString() ?? '0');
+            setIsTaxable(product?.is_taxable ?? true);
             setImageFile(null);
             setErrors({});
         }
@@ -403,6 +406,7 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
         fd.append('stock', stock);
         fd.append('capital', capital);
         fd.append('markup', markup);
+        fd.append('is_taxable', isTaxable ? '1' : '0');
         if (isAdmin) fd.append('branch_id', branchId);
         // Only append image when user actually picked a new file
         if (imageFile) fd.append('product_img', imageFile);
@@ -464,6 +468,19 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
                             <option value="bundle">Bundle</option>
                         </select>
                     </Field>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-4 py-3">
+                    <div>
+                        <p className="text-sm font-medium">VAT / Tax Applicable</p>
+                        <p className="text-xs text-muted-foreground">When enabled, VAT will be applied to this product at checkout.</p>
+                    </div>
+                    <button type="button" onClick={() => setIsTaxable(v => !v)}
+                        className={cn('relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none',
+                            isTaxable ? 'bg-primary' : 'bg-muted')}>
+                        <span className={cn('pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform transition-transform',
+                            isTaxable ? 'translate-x-5' : 'translate-x-0')} />
+                    </button>
                 </div>
 
                 {isAdmin && (
@@ -689,10 +706,11 @@ function AllProductsTab({ products, pagination, filters, stats, categories, bran
     const { delete: destroy, processing } = useForm({});
 
     // Local filter state (mirrors URL params)
-    const [search, setSearchVal]       = useState(filters.search);
-    const [filterCat, setFilterCat]   = useState(filters.category_id?.toString() ?? '');
-    const [filterType, setFilterType] = useState(filters.type);
+    const [search, setSearchVal]           = useState(filters.search);
+    const [filterCat, setFilterCat]       = useState(filters.category_id?.toString() ?? '');
+    const [filterType, setFilterType]     = useState(filters.type);
     const [filterStatus, setFilterStatus] = useState(filters.status);
+    const [filterBranch, setFilterBranch] = useState(filters.branch_id?.toString() ?? '');
 
     const navigate = useCallback((params: Record<string, any>) => {
         setLoading(true);
@@ -705,28 +723,29 @@ function AllProductsTab({ products, pagination, filters, stats, categories, bran
     }, []);
 
     const debouncedSearch = useDebounce((val: string) => {
-        navigate({ search: val, category_id: filterCat, type: filterType, status: filterStatus, per_page: pagination.per_page, page: 1 });
+        navigate({ search: val, category_id: filterCat, type: filterType, status: filterStatus, branch_id: filterBranch, per_page: pagination.per_page, page: 1 });
     }, 400);
 
     const handleSearch = (val: string) => { setSearchVal(val); debouncedSearch(val); };
 
     const handleFilter = (key: string, val: string) => {
-        const next = { search, category_id: filterCat, type: filterType, status: filterStatus, per_page: pagination.per_page, page: 1, [key]: val };
+        const next = { search, category_id: filterCat, type: filterType, status: filterStatus, branch_id: filterBranch, per_page: pagination.per_page, page: 1, [key]: val };
         if (key === 'category_id') setFilterCat(val);
         if (key === 'type')        setFilterType(val);
         if (key === 'status')      setFilterStatus(val);
+        if (key === 'branch_id')   setFilterBranch(val);
         navigate(next);
     };
 
-    const handlePageChange = (page: number) => navigate({ search, category_id: filterCat, type: filterType, status: filterStatus, per_page: pagination.per_page, page });
-    const handlePerPage    = (pp: number)   => navigate({ search, category_id: filterCat, type: filterType, status: filterStatus, per_page: pp, page: 1 });
+    const handlePageChange = (page: number) => navigate({ search, category_id: filterCat, type: filterType, status: filterStatus, branch_id: filterBranch, per_page: pagination.per_page, page });
+    const handlePerPage    = (pp: number)   => navigate({ search, category_id: filterCat, type: filterType, status: filterStatus, branch_id: filterBranch, per_page: pp, page: 1 });
 
     const clearFilters = () => {
         setSearchVal(''); setFilterCat(''); setFilterType(''); setFilterStatus('');
-        navigate({ per_page: pagination.per_page, page: 1 });
+        navigate({ per_page: pagination.per_page, page: 1, branch_id: filterBranch });
     };
 
-    const hasFilters = search || filterCat || filterType || filterStatus;
+    const hasFilters = search || filterCat || filterType || filterStatus || filterBranch;
 
     const handleDelete = () => {
         if (!deleteProd) return;
@@ -779,6 +798,12 @@ function AllProductsTab({ products, pagination, filters, stats, categories, bran
                         <option value="low_stock">Low Stock</option>
                         <option value="out_of_stock">Out of Stock</option>
                     </select>
+                    {isAdmin && branches.length > 0 && (
+                        <select value={filterBranch} onChange={e => handleFilter('branch_id', e.target.value)}
+                            className="h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground">
+                            {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                        </select>
+                    )}
                     {hasFilters && (
                         <button onClick={clearFilters} className="h-9 px-3 text-xs font-medium text-muted-foreground border border-border rounded-lg hover:bg-muted flex items-center gap-1.5 transition-colors">
                             <X className="h-3.5 w-3.5" /> Clear
@@ -807,8 +832,9 @@ function AllProductsTab({ products, pagination, filters, stats, categories, bran
                                 {p.product_img
                                     ? <img src={p.product_img} alt={p.name} className="w-full h-full object-cover" />
                                     : <div className="w-full h-full flex items-center justify-center"><Package className="h-10 w-10 text-muted-foreground/20" /></div>}
-                                <div className="absolute top-2 left-2">
+                                <div className="absolute top-2 left-2 flex flex-col gap-1">
                                     <span className={cn('text-xs px-2 py-0.5 rounded-full', typeBadge(p.product_type))}>{typeLabel(p.product_type)}</span>
+                                    {!p.is_taxable && <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">No VAT</span>}
                                 </div>
                                 <div className="absolute top-2 right-2">
                                     <span className={cn('text-xs px-2 py-0.5 rounded-full', statusBadge(p.global_stock_status))}>{p.global_stock_status}</span>

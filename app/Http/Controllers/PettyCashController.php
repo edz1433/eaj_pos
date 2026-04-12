@@ -87,16 +87,8 @@ class PettyCashController extends Controller
             'status'              => 'pending',
         ]);
 
-        // AUTO APPROVE if the requester is NOT a cashier
-        $isCashier = strtolower($user->role ?? '') === 'cashier';
-
         try {
-            if (!$isCashier) {
-                $voucher->approve($user->id);
-                $message = "Petty cash voucher #{$voucher->voucher_number} has been automatically approved.";
-            } else {
-                $message = "Petty cash voucher #{$voucher->voucher_number} has been submitted for approval.";
-            }
+            $voucher->approve($user->id);
         } catch (\RuntimeException $e) {
             // Approval failed (e.g. insufficient balance) — delete the just-created pending voucher
             $voucher->delete();
@@ -105,7 +97,7 @@ class PettyCashController extends Controller
 
         ActivityLog::create([
             'user_id'      => $user->id,
-            'action'       => $isCashier ? 'petty_cash_voucher_created' : 'petty_cash_voucher_auto_approved',
+            'action'       => 'petty_cash_voucher_created',
             'subject_type' => PettyCashVoucher::class,
             'subject_id'   => $voucher->id,
             'properties'   => [
@@ -113,13 +105,12 @@ class PettyCashController extends Controller
                 'type'           => $validated['voucher_type'],
                 'amount'         => (float) $validated['amount'],
                 'purpose'        => $validated['purpose'],
-                'auto_approved'  => !$isCashier,
             ],
         ]);
 
         return back()->with('message', [
             'type' => 'success',
-            'text' => $message,
+            'text' => "Petty cash voucher #{$voucher->voucher_number} recorded.",
         ]);
     }
 

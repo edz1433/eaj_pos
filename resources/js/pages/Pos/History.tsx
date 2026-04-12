@@ -8,7 +8,7 @@ import { routes } from "@/routes";
 import { cn } from "@/lib/utils";
 import {
     Search, X, Filter, ChevronRight, Eye, Receipt, TrendingUp,
-    Banknote, Smartphone, CreditCard, Tag, ArrowLeft, Table2, Calendar,
+    Banknote, Smartphone, CreditCard, Tag, ArrowLeft, Table2, Calendar, CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fmtDate, manilaNow, toDateStr, manilaRange } from "@/lib/date";
@@ -28,7 +28,8 @@ interface PaginatedSales {
 }
 interface Summary {
     total_sales: number; total_count: number;
-    cash_total: number; gcash_total: number; card_total: number; discount_total: number;
+    cash_total: number; gcash_total: number; card_total: number;
+    installment_dp: number; remittance_total: number; discount_total: number;
 }
 interface Branch { id: number; name: string; business_type: string; }
 interface PageProps {
@@ -187,12 +188,14 @@ export default function PosHistory() {
     const activePreset = presets.find(p => p.from === (filters.from ?? "") && p.to === (filters.to ?? ""));
 
     const summaryCards = [
-        { label: "Revenue",     value: fmtMoney(summary.total_sales, currency),   icon: TrendingUp, color: "bg-indigo-50  text-indigo-600  dark:bg-indigo-950/30  dark:text-indigo-400"  },
-        { label: "Count",       value: summary.total_count.toLocaleString(),        icon: Receipt,    color: "bg-sky-50     text-sky-600     dark:bg-sky-950/30     dark:text-sky-400"     },
-        { label: "Cash",        value: fmtMoney(summary.cash_total, currency),     icon: Banknote,   color: "bg-green-50   text-green-600   dark:bg-green-950/30   dark:text-green-400"   },
-        { label: "GCash",       value: fmtMoney(summary.gcash_total, currency),    icon: Smartphone, color: "bg-blue-50    text-blue-600    dark:bg-blue-950/30    dark:text-blue-400"    },
-        { label: "Card",        value: fmtMoney(summary.card_total, currency),     icon: CreditCard, color: "bg-purple-50  text-purple-600  dark:bg-purple-950/30  dark:text-purple-400"  },
-        { label: "Discounts",   value: fmtMoney(summary.discount_total, currency), icon: Tag,        color: "bg-amber-50   text-amber-600   dark:bg-amber-950/30   dark:text-amber-400"   },
+        { label: "Revenue",        value: fmtMoney(summary.total_sales, currency),    icon: TrendingUp,     color: "bg-indigo-50  text-indigo-600  dark:bg-indigo-950/30  dark:text-indigo-400"  },
+        { label: "Cash",           value: fmtMoney(summary.cash_total, currency),      icon: Banknote,       color: "bg-green-50   text-green-600   dark:bg-green-950/30   dark:text-green-400"   },
+        { label: "GCash",          value: fmtMoney(summary.gcash_total, currency),     icon: Smartphone,     color: "bg-blue-50    text-blue-600    dark:bg-blue-950/30    dark:text-blue-400"    },
+        { label: "Card",           value: fmtMoney(summary.card_total, currency),      icon: CreditCard,     color: "bg-purple-50  text-purple-600  dark:bg-purple-950/30  dark:text-purple-400"  },
+        ...((summary.installment_dp + (summary.remittance_total ?? 0)) > 0 ? [
+        { label: "Financing DP & Remittance", value: fmtMoney(summary.installment_dp + (summary.remittance_total ?? 0), currency), icon: CalendarClock, color: "bg-orange-50  text-orange-600  dark:bg-orange-950/30  dark:text-orange-400" },
+        ] : []),
+        { label: "Discounts",      value: fmtMoney(summary.discount_total, currency),  icon: Tag,            color: "bg-amber-50   text-amber-600   dark:bg-amber-950/30   dark:text-amber-400"   },
     ];
 
     // Build table columns

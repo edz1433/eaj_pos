@@ -43,6 +43,10 @@ class MenuHelper
             '30' => 'Ingredient Usage Report',
             '31' => 'Losses / Damages',
             '32' => 'Installments',
+            '33' => 'Inventory',
+            '34' => 'Stock Transfers',
+            '35' => 'Warehouses',
+            '36' => 'Stock Count',
         ];
     }
 
@@ -86,6 +90,10 @@ class MenuHelper
                 '12' => 'Purchase Orders',
                 '13' => 'Goods Received Notes',
                 '31' => 'Losses / Damages',
+                '33' => 'Inventory',
+                '34' => 'Stock Transfers',
+                '35' => 'Warehouses',
+                '36' => 'Stock Count',
             ],
             'Cash' => [
                 '14' => 'Cash Sessions',

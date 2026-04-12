@@ -7,7 +7,7 @@ import {
     TrendingUp, Package, AlertTriangle, Wallet,
     BarChart2, Star, XCircle, TrendingDown, Clock,
     CreditCard, Tag, ShoppingBag, Calendar, Activity,
-    Hash, Building2, RefreshCw,
+    Hash, Building2, RefreshCw, CalendarClock,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,6 +42,7 @@ const QUICK_ACTIONS = [
     { label: "Discounts",        message: "Discount summary today",                   icon: Tag         },
     { label: "Purchase Orders",  message: "Pending purchase orders",                  icon: ShoppingBag },
     { label: "Cash Session",     message: "Cash session status",                      icon: Wallet      },
+    { label: "Installments",     message: "Installment summary",                      icon: CalendarClock},
     { label: "Expenses",         message: "Today's expenses",                         icon: BarChart2   },
     { label: "Monthly Expenses", message: "Monthly expenses",                         icon: BarChart2   },
     { label: "Voids Today",      message: "Any voided transactions today?",           icon: XCircle     },
@@ -93,7 +94,7 @@ function ChatUI() {
             setMessages([{
                 id:        "welcome",
                 role:      "assistant",
-                text:      "Hi! 👋 I'm your EA business assistant. I can help you check your sales, inventory, expenses, and more.\n\nWhat would you like to know?",
+                text:      "Hi! 👋 I'm your EAJ business assistant. I can help you check your sales, inventory, expenses, and more.\n\nWhat would you like to know?",
                 timestamp: new Date(),
             }]);
             setTimeout(() => inputRef.current?.focus(), 120);
@@ -170,7 +171,7 @@ function ChatUI() {
                     "bg-primary text-primary-foreground hover:shadow-xl hover:scale-105 active:scale-95",
                     open && "rotate-90 scale-90"
                 )}
-                title="EA Business Assistant"
+                title="EAJ Business Assistant"
             >
                 {open ? <X className="h-5 w-5" /> : <Bot className="h-6 w-6" />}
                 {/* Online dot */}
@@ -196,7 +197,7 @@ function ChatUI() {
                         <Sparkles className="h-4 w-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm leading-tight">EA Assistant</p>
+                        <p className="font-bold text-sm leading-tight">EAJ Assistant</p>
                         <p className="text-[10px] opacity-70 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
                             Powered by your business data

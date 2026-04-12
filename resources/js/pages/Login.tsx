@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, FormEvent } from 'react';
-import { Head, useForm } from '@inertiajs/react';
+import { Head, useForm, usePage } from '@inertiajs/react';
 import { cn } from '@/lib/utils';
 import { routes } from '@/routes';
 import { useTheme } from 'next-themes';
@@ -29,7 +29,9 @@ interface LoginFormData {
   password: string;
 }
 
-export default function Login({ errors: serverErrors, logo_url }: LoginProps) {
+export default function Login({ errors: serverErrors, logo_url: propLogoUrl }: LoginProps) {
+  const { props } = usePage<{ app?: { logo_url?: string | null } }>();
+  const logo_url = propLogoUrl ?? props.app?.logo_url ?? null;
   const [showPassword, setShowPassword] = useState(false);
   const { setTheme } = useTheme();
 

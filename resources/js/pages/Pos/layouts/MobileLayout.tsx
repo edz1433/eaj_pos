@@ -19,8 +19,12 @@ export default function MobileLayout({ filtered, cart, currency, onProductClick,
     const [cartOpen, setCartOpen] = useState(false);
 
     return (
-        <div className="flex flex-col h-full">
-            <div className="flex-1 overflow-y-auto p-3">
+        // min-h-0 is critical: flex children default to min-height:auto which lets
+        // the products list grow past the container instead of scrolling within it.
+        <div className="flex flex-col h-full min-h-0 overflow-hidden">
+
+            {/* ── Product list — scrolls independently ── */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
                 {filtered.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
                         <Package className="h-8 w-8 opacity-20" />
@@ -70,47 +74,48 @@ export default function MobileLayout({ filtered, cart, currency, onProductClick,
                         })}
                     </div>
                 )}
-                <div className="h-20" />
             </div>
 
-            <div className="shrink-0 border-t border-border bg-card shadow-2xl">
+            {/* ── Cart drawer + pay bar — always visible at bottom ── */}
+            <div className="shrink-0 border-t border-border bg-card shadow-[0_-4px_24px_rgba(0,0,0,0.12)]">
+                {/* Expandable cart items */}
                 {cartOpen && (
-                    <div className="max-h-64 overflow-y-auto border-b border-border p-4 bg-card">
+                    <div className="max-h-[40vh] overflow-y-auto overscroll-contain border-b border-border divide-y divide-border">
                         {cart.length === 0 ? (
                             <div className="text-center py-6 text-muted-foreground">
                                 <ShoppingCart className="h-8 w-8 mx-auto opacity-20 mb-2" />
                                 <p className="text-sm">Cart is empty</p>
                             </div>
                         ) : (
-                            <div className="divide-y divide-border">
-                                {cart.map(item => (
-                                    <div key={item.key} className="flex items-center gap-3 py-3">
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-semibold text-foreground truncate">{item.name}</p>
-                                            {item.variant_name && <p className="text-xs text-muted-foreground">{item.variant_name}</p>}
-                                            <p className="text-xs font-bold text-primary tabular-nums mt-0.5">
-                                                {fmtMoney(item.price, currency)} × {item.qty} = {fmtMoney(item.price * item.qty, currency)}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                            <button onClick={() => onUpdateQty(item.key, -1)}
-                                                className="h-8 w-8 flex items-center justify-center rounded-xl border border-border text-lg font-bold hover:bg-muted transition-colors">−</button>
-                                            <span className="w-8 text-center text-sm font-black tabular-nums">{item.qty}</span>
-                                            <button onClick={() => onUpdateQty(item.key, 1)} disabled={item.qty >= item.stock}
-                                                className="h-8 w-8 flex items-center justify-center rounded-xl border border-border text-lg font-bold hover:bg-muted transition-colors disabled:opacity-30">+</button>
-                                            <button onClick={() => onRemove(item.key)}
-                                                className="h-8 w-8 ml-1 flex items-center justify-center rounded-xl text-destructive hover:bg-destructive/10 transition-colors">
-                                                <X className="h-3.5 w-3.5" />
-                                            </button>
-                                        </div>
+                            cart.map(item => (
+                                <div key={item.key} className="flex items-center gap-3 px-4 py-3">
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-foreground truncate">{item.name}</p>
+                                        {item.variant_name && <p className="text-xs text-muted-foreground">{item.variant_name}</p>}
+                                        <p className="text-xs font-bold text-primary tabular-nums mt-0.5">
+                                            {fmtMoney(item.price, currency)} × {item.qty} = {fmtMoney(item.price * item.qty, currency)}
+                                        </p>
                                     </div>
-                                ))}
-                            </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        <button onClick={() => onUpdateQty(item.key, -1)}
+                                            className="h-8 w-8 flex items-center justify-center rounded-xl border border-border text-lg font-bold hover:bg-muted transition-colors">−</button>
+                                        <span className="w-8 text-center text-sm font-black tabular-nums">{item.qty}</span>
+                                        <button onClick={() => onUpdateQty(item.key, 1)} disabled={item.qty >= item.stock}
+                                            className="h-8 w-8 flex items-center justify-center rounded-xl border border-border text-lg font-bold hover:bg-muted transition-colors disabled:opacity-30">+</button>
+                                        <button onClick={() => onRemove(item.key)}
+                                            className="h-8 w-8 ml-1 flex items-center justify-center rounded-xl text-destructive hover:bg-destructive/10 transition-colors">
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
                         )}
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 px-3 py-3 bg-card border-t border-border shadow-2xl">
+                {/* Cart toggle + Pay button row */}
+                <div className="flex items-center gap-2 px-3 py-3"
+                    style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                     <button onClick={() => setCartOpen(o => !o)}
                         className={cn(
                             "flex items-center gap-2 flex-1 h-12 px-4 rounded-2xl border text-sm font-semibold transition-all",

@@ -86,16 +86,32 @@ class DailySummary extends Model
             ->when($branchId !== null, fn($q) => $q->where('branch_id', $branchId));
 
         $totalTransactions = (clone $salesQuery)->count();
-        $grossSales        = (float) (clone $salesQuery)->sum('total');
+
+        // Gross = actual money collected: DP only for installment sales, full total for all others
+        $grossSales = (float) (clone $salesQuery)
+            ->selectRaw('SUM(CASE WHEN payment_method = "installment" THEN payment_amount ELSE total END) as collected')
+            ->value('collected');
 
         $totalRefunds = (float) Sale::whereDate('created_at', $date)
             ->where('status', 'voided')
             ->when($branchId !== null, fn($q) => $q->where('branch_id', $branchId))
             ->sum('total');
 
-        $cashSales  = (float) (clone $salesQuery)->where('payment_method', 'cash')->sum('total');
-        $gcashSales = (float) (clone $salesQuery)->where('payment_method', 'gcash')->sum('total');
-        $cardSales  = (float) (clone $salesQuery)->where('payment_method', 'card')->sum('total');
+        $cashSales     = (float) (clone $salesQuery)->where('payment_method', 'cash')->sum('total');
+        $gcashSalesPOS = (float) (clone $salesQuery)->where('payment_method', 'gcash')->sum('total');
+        $cardSalesPOS  = (float) (clone $salesQuery)->where('payment_method', 'card')->sum('total');
+        $installmentDp = (float) (clone $salesQuery)->where('payment_method', 'installment')->sum('payment_amount');
+
+        // Remittances received on this date (gcash/card/bank from financing providers)
+        $remit      = InstallmentPayment::totalsForDate($date, $branchId);
+        $gcashSales = $gcashSalesPOS + $remit['gcash'];
+        $cardSales  = $cardSalesPOS  + $remit['card'];
+        $bankSales  = (float) (clone $salesQuery)->where('payment_method', 'bank')->sum('total') + $remit['bank'];
+
+        // Gross = POS collected + all remittances
+        $grossSales += $remit['total'];
+
+        // other_sales = installment DP + bank + any truly-other methods
         $otherSales = round($grossSales - $cashSales - $gcashSales - $cardSales, 2);
 
         // Items sold

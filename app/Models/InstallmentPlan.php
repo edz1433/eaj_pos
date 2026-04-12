@@ -12,6 +12,8 @@ class InstallmentPlan extends Model
         'sale_id',
         'branch_id',
         'user_id',
+        'provider',
+        'reference_number',
         'customer_name',
         'customer_phone',
         'total_amount',
@@ -26,6 +28,17 @@ class InstallmentPlan extends Model
         'status',
         'notes',
     ];
+
+    public const PROVIDERS = [
+        'home_credit' => 'Home Credit',
+        'skyro'       => 'Skyro',
+        'other'       => 'Other',
+    ];
+
+    public function providerLabel(): string
+    {
+        return self::PROVIDERS[$this->provider] ?? 'Other';
+    }
 
     protected $casts = [
         'total_amount'       => 'decimal:2',

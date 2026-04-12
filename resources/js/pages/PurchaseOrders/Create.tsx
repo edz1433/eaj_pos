@@ -33,6 +33,8 @@ import {
     PackageCheck,
     ArrowLeft,
     ScanLine,
+    Building2,
+    Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -60,9 +62,15 @@ interface CartItem {
     unit_cost: number;
 }
 
+interface Branch    { id: number; name: string; code: string; }
+interface WHouse    { id: number; name: string; code: string; }
+
 interface PageProps {
     suppliers: Supplier[];
     products: Product[];
+    branches: Branch[];
+    warehouses: WHouse[];
+    user_branch_id: number | null;
     errors?: Record<string, string>;
     message?: { type: string; text: string };
 }
@@ -70,9 +78,11 @@ interface PageProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function PurchaseOrdersCreate() {
     const { props } = usePage<PageProps>();
-    const { suppliers, products, errors = {} } = props;
+    const { suppliers, products, branches, warehouses, user_branch_id, errors = {} } = props;
 
     // ── Form state ────────────────────────────────────────────────────────────
+    const [destType, setDestType]   = useState<"branch" | "warehouse">("branch");
+    const [destId,   setDestId]     = useState<string>(user_branch_id ? String(user_branch_id) : "");
     const [supplierId, setSupplierId] = useState<string>("");
     const [orNumber, setOrNumber] = useState("");
     const [paymentMethod, setPaymentMethod] = useState<"cash" | "credit" | "postdated_check">("cash");
@@ -161,6 +171,7 @@ export default function PurchaseOrdersCreate() {
     // ── Submit ────────────────────────────────────────────────────────────────
     const handleSubmit = () => {
         if (!supplierId) { toast.error("Please select a supplier."); return; }
+        if (!destId) { toast.error("Please select a destination (branch or warehouse)."); return; }
         if (cart.length === 0) { toast.error("Please add at least one item."); return; }
         if (paymentMethod === "postdated_check" && !checkDate) { toast.error("Check date is required."); return; }
         if (paymentMethod === "postdated_check" && !checkNumber) { toast.error("Check number is required."); return; }
@@ -173,6 +184,8 @@ export default function PurchaseOrdersCreate() {
             routes.purchaseOrders.store(),
             {
                 supplier_id:    Number(supplierId),
+                dest_type:      destType,
+                dest_id:        Number(destId),
                 or_number:      orNumber || null,
                 payment_method: paymentMethod,
                 check_date:     paymentMethod === "postdated_check" ? checkDate : null,
@@ -228,6 +241,39 @@ export default function PurchaseOrdersCreate() {
                                 <CardTitle className="text-sm font-medium">Purchase Details</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4">
+
+                                {/* Destination */}
+                                <div className="space-y-1.5">
+                                    <Label>Stock Destination <span className="text-destructive">*</span></Label>
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => { setDestType("branch"); setDestId(user_branch_id ? String(user_branch_id) : ""); }}
+                                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border text-sm font-medium transition-colors ${destType === "branch" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-muted-foreground"}`}
+                                        >
+                                            <Building2 className="h-4 w-4" /> Branch
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setDestType("warehouse"); setDestId(""); }}
+                                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border text-sm font-medium transition-colors ${destType === "warehouse" ? "border-purple-500 bg-purple-500/10 text-purple-400" : "border-border text-muted-foreground hover:border-muted-foreground"}`}
+                                        >
+                                            <Warehouse className="h-4 w-4" /> Warehouse
+                                        </button>
+                                    </div>
+                                    <Select value={destId} onValueChange={setDestId}>
+                                        <SelectTrigger className={errors.dest_id ? "border-destructive" : ""}>
+                                            <SelectValue placeholder={`Select ${destType}…`} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {destType === "branch"
+                                                ? branches.map(b => <SelectItem key={b.id} value={String(b.id)}>{b.name} ({b.code})</SelectItem>)
+                                                : warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name} ({w.code})</SelectItem>)
+                                            }
+                                        </SelectContent>
+                                    </Select>
+                                    {errors.dest_id && <p className="text-xs text-destructive">{errors.dest_id}</p>}
+                                </div>
 
                                 {/* Supplier */}
                                 <div className="space-y-1.5">

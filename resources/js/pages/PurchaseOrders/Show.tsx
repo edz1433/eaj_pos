@@ -46,6 +46,8 @@ interface Purchase {
         address: string | null;
         contact_person: string | null;
     } | null;
+    dest_type: string;
+    dest_name: string;
     received_by: string;
     total: number;
     items: PurchaseItem[];
@@ -149,6 +151,7 @@ export default function PurchaseOrdersShow() {
                         </CardHeader>
                         <CardContent className="text-sm space-y-1">
                             <p><span className="text-muted-foreground">Date received:</span> {purchase.received_date ?? "—"}</p>
+                            <p><span className="text-muted-foreground">Stock sent to:</span> <span className="font-medium">{purchase.dest_name}</span> <span className="text-xs text-muted-foreground">({purchase.dest_type})</span></p>
                             <p><span className="text-muted-foreground">Received by:</span> {purchase.received_by}</p>
                             <p><span className="text-muted-foreground">Created:</span> {purchase.created_at}</p>
                             {purchase.notes && (

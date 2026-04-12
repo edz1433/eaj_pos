@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Branch;
 use App\Models\GoodsReceivedNote;
 use App\Models\GrnItem;
 use App\Models\Product;
 use App\Models\Supplier;
+use App\Models\Warehouse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -91,9 +93,17 @@ class PurchaseController extends Controller
                 'category' => $p->category?->name,
             ]);
 
+        $user    = auth()->user();
+        $isAdmin = $user->isSuperAdmin() || $user->isAdministrator();
+
         return Inertia::render('PurchaseOrders/Create', [
-            'suppliers' => $suppliers,
-            'products'  => $products,
+            'suppliers'  => $suppliers,
+            'products'   => $products,
+            'branches'   => $isAdmin
+                ? Branch::where('is_active', true)->orderBy('name')->get(['id', 'name', 'code'])
+                : Branch::where('id', $user->branch_id)->get(['id', 'name', 'code']),
+            'warehouses' => Warehouse::where('is_active', true)->orderBy('name')->get(['id', 'name', 'code']),
+            'user_branch_id' => $user->branch_id,
         ]);
     }
 
@@ -107,6 +117,8 @@ class PurchaseController extends Controller
             'check_number'   => 'required_if:payment_method,postdated_check|nullable|string|max:100',
             'received_date'  => 'required|date',
             'notes'          => 'nullable|string|max:1000',
+            'dest_type'      => 'required|in:branch,warehouse',
+            'dest_id'        => 'required|integer',
             'items'          => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity'   => 'required|integer|min:1',
@@ -116,14 +128,28 @@ class PurchaseController extends Controller
             'items.min'                  => 'Please add at least one item.',
             'check_date.required_if'     => 'Check date is required for postdated check.',
             'check_number.required_if'   => 'Check number is required for postdated check.',
+            'dest_id.required'           => 'Please select where the stock will go.',
         ]);
 
         $user = auth()->user();
+
+        // Validate dest_id points to a real active location
+        if ($validated['dest_type'] === 'branch') {
+            if (! Branch::where('id', $validated['dest_id'])->where('is_active', true)->exists()) {
+                return back()->withErrors(['dest_id' => 'Selected branch not found.']);
+            }
+        } else {
+            if (! Warehouse::where('id', $validated['dest_id'])->where('is_active', true)->exists()) {
+                return back()->withErrors(['dest_id' => 'Selected warehouse not found.']);
+            }
+        }
 
         DB::transaction(function () use ($validated, $user) {
             $grn = GoodsReceivedNote::create([
                 'supplier_id'    => $validated['supplier_id'],
                 'branch_id'      => $user->branch_id,
+                'dest_type'      => $validated['dest_type'],
+                'dest_id'        => $validated['dest_id'],
                 'received_by'    => $user->id,
                 'received_date'  => $validated['received_date'],
                 'or_number'      => $validated['or_number'] ?? null,
@@ -133,7 +159,6 @@ class PurchaseController extends Controller
                 'notes'          => $validated['notes'] ?? null,
                 'source'         => 'purchase',
                 'delivery_type'  => 'full',
-                // cash = immediately paid
                 'paid_at'        => $validated['payment_method'] === 'cash' ? now() : null,
             ]);
 
@@ -187,6 +212,10 @@ class PurchaseController extends Controller
                     'address'        => $purchase->supplier->address,
                     'contact_person' => $purchase->supplier->contact_person,
                 ] : null,
+                'dest_type'      => $purchase->dest_type ?? 'branch',
+                'dest_name'      => $purchase->dest_type === 'warehouse'
+                    ? (Warehouse::find($purchase->dest_id)?->name ?? '—')
+                    : (Branch::find($purchase->dest_id ?? $purchase->branch_id)?->name ?? '—'),
                 'received_by'    => $purchase->receivedBy
                     ? $purchase->receivedBy->fname . ' ' . $purchase->receivedBy->lname
                     : '—',

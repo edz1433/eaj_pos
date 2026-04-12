@@ -70,6 +70,10 @@ import {
     Moon,
     ChevronDown,
     CalendarClock,
+    LayoutList,
+    ArrowLeftRight,
+    Warehouse,
+    ClipboardCheck,
 } from "lucide-react";
 
 import {
@@ -122,6 +126,10 @@ const MENU = {
     PROMOS:             "29",
     STOCK_ADJUSTMENTS:  "31",
     INSTALLMENTS:       "32",
+    INVENTORY:          "33",
+    STOCK_TRANSFERS:    "34",
+    WAREHOUSES:         "35",
+    STOCK_COUNT:        "36",
 } as const;
 
 // ─── Sidebar section header ───────────────────────────────────────────────────
@@ -265,7 +273,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     };
 
     // Inventory group active if any sub-path is active
-    const inventoryActive = ["/products", "/categories", "/variants", "/bundles", "/recipes", "/stock", "/purchase-orders", "/grn", "/stock-adjustments"].some(isActive);
+    const inventoryActive = ["/products", "/categories", "/variants", "/bundles", "/recipes", "/stock", "/purchase-orders", "/grn", "/stock-adjustments", "/inventory", "/stock-transfers", "/warehouses"].some(isActive);
     // Cash group active
     const cashActive = ["/cash-sessions", "/cash-counts", "/petty-cash", "/expenses"].some(isActive);
     // Reports group active
@@ -348,9 +356,15 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                     )}
 
                                     {/* ── INVENTORY ─────────────────────── */}
-                                    {(has(MENU.PRODUCTS) || has(MENU.PURCHASE_ORDERS) || has(MENU.STOCK_ADJUSTMENTS)) && (
+                                    {(has(MENU.PRODUCTS) || has(MENU.PURCHASE_ORDERS) || has(MENU.STOCK_ADJUSTMENTS) || has(MENU.INVENTORY) || has(MENU.STOCK_TRANSFERS) || has(MENU.WAREHOUSES) || has(MENU.STOCK_COUNT)) && (
                                         <>
                                             <SidebarSectionLabel label="Inventory" />
+                                            {has(MENU.INVENTORY) && (
+                                                <NavItem href="/inventory" icon={LayoutList} label="Inventory" active={isActive("/inventory")} />
+                                            )}
+                                            {has(MENU.STOCK_COUNT) && (
+                                                <NavItem href="/stock-count" icon={ClipboardCheck} label="Stock Count" active={isActive("/stock-count")} />
+                                            )}
                                             {has(MENU.PRODUCTS) && (
                                                 <NavItem
                                                     href="/products"
@@ -358,6 +372,12 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                                     label="All Products"
                                                     active={currentPath === "/products"}
                                                 />
+                                            )}
+                                            {has(MENU.STOCK_TRANSFERS) && (
+                                                <NavItem href="/stock-transfers" icon={ArrowLeftRight} label="Stock Transfers" active={isActive("/stock-transfers")} />
+                                            )}
+                                            {has(MENU.WAREHOUSES) && (
+                                                <NavItem href="/warehouses" icon={Warehouse} label="Warehouses" active={isActive("/warehouses")} />
                                             )}
                                             {has(MENU.PURCHASE_ORDERS) && (
                                                 <NavItem

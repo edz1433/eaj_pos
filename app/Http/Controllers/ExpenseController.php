@@ -57,9 +57,7 @@ class ExpenseController extends Controller
             'notes'               => ['nullable', 'string', 'max:1000'],
         ]);
 
-        // Cashiers submit expenses as pending — requires manager/admin approval.
-        // Managers and above are auto-approved.
-        $status = $user->hasElevatedAccess() ? 'approved' : 'pending';
+        $status = 'approved';
 
         $expense = Expense::create([
             'branch_id'           => $user->branch_id,
@@ -85,9 +83,7 @@ class ExpenseController extends Controller
             ],
         ]);
 
-        $msg = $status === 'approved'
-            ? "Expense of ₱" . number_format($expense->amount, 2) . " recorded and approved."
-            : "Expense of ₱" . number_format($expense->amount, 2) . " submitted for approval.";
+        $msg = "Expense of ₱" . number_format($expense->amount, 2) . " recorded.";
 
         return back()->with('message', ['type' => 'success', 'text' => $msg]);
     }

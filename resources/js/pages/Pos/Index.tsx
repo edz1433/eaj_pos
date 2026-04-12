@@ -139,16 +139,17 @@ function VariantPicker({ product, currency, onSelect, onClose }: {
 }
 
 // ─── PaymentModal ─────────────────────────────────────────────────────────────
-function PaymentModal({ subtotal, settings, currency, customerNameRequired, promos, cart, onConfirm, onClose, loading }: {
+function PaymentModal({ subtotal, settings, currency, customerNameRequired, promos, cart, onConfirm, onClose, loading, serverError }: {
     subtotal: number; settings: PageProps["settings"]; currency: string;
     customerNameRequired?: boolean; promos: ActivePromo[]; cart: CartItem[];
     onConfirm: (d: {
         payment_method: PayMethod; payment_amount: number; customer_name: string;
         discount_percent: number; promo_id: number | null;
+        installment_provider?: string; installment_reference?: string;
         installment_customer_phone?: string; installment_down_payment?: number;
-        installments_count?: number; installment_interval?: string; installment_notes?: string;
+        installments_count?: number; installment_notes?: string;
     }) => void;
-    onClose: () => void; loading: boolean;
+    onClose: () => void; loading: boolean; serverError?: string | null;
 }) {
     const enableInstallments = settings?.enable_installments ?? false;
     const [method,       setMethod]       = useState<PayMethod>((settings?.default_payment ?? "cash") as PayMethod);
@@ -159,18 +160,21 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
     const [appliedPromo, setAppliedPromo] = useState<ActivePromo | null>(null);
     const [promoError,   setPromoError]   = useState("");
     const [showPromos,   setShowPromos]   = useState(false);
-    // Installment fields
-    const [instPhone,    setInstPhone]    = useState("");
-    const [instDown,     setInstDown]     = useState("0");
-    const [instCount,    setInstCount]    = useState("3");
-    const [instInterval, setInstInterval] = useState("monthly");
-    const [instNotes,    setInstNotes]    = useState("");
+    // Financing / installment fields
+    const [instProvider,   setInstProvider]   = useState<"home_credit"|"skyro"|"other">("home_credit");
+    const [instReference,  setInstReference]  = useState("");
+    const [instPhone,      setInstPhone]      = useState("");
+    const [instDown,       setInstDown]       = useState("0");
+    const [instCount,      setInstCount]      = useState("6");
+    const [instNotes,      setInstNotes]      = useState("");
 
     const isInstallment = method === "installment";
 
+    const r2 = (v: number) => Math.round(v * 100) / 100; // round to 2 decimal places — matches PHP round($v, 2)
+
     const disc      = Math.min(parseFloat(discPct) || 0, settings?.max_discount_percent ?? 100);
-    const discAmt   = (subtotal * disc) / 100;
-    const afterDisc = subtotal - discAmt;
+    const discAmt   = r2(subtotal * disc / 100);
+    const afterDisc = r2(subtotal - discAmt);
 
     const promoAppliesToCart = (p: ActivePromo) => {
         if (p.applies_to === 'all') return true;
@@ -181,13 +185,13 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
         if (!p) return 0;
         if (p.minimum_purchase && afterDisc < p.minimum_purchase) return 0;
         return p.discount_type === 'percent'
-            ? Math.round((afterDisc * p.discount_value / 100) * 100) / 100
-            : Math.min(p.discount_value, afterDisc);
+            ? r2(afterDisc * p.discount_value / 100)
+            : Math.min(r2(p.discount_value), afterDisc);
     };
     const promoAmt   = computePromoAmt(appliedPromo);
-    const afterPromo = afterDisc - promoAmt;
+    const afterPromo = r2(afterDisc - promoAmt);
     const vatRate    = (settings?.vat_enabled && !settings?.vat_inclusive) ? (settings.vat_rate ?? 0) : 0;
-    const vatAmt     = (afterPromo * vatRate) / 100;
+    const vatAmt     = r2(afterPromo * vatRate / 100);
     const total      = afterPromo + vatAmt;
     const tenderN    = parseFloat(tender) || 0;
     const change     = Math.max(0, tenderN - total);
@@ -196,7 +200,7 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
     const canPay     = total > 0
         && (!isCash || tenderN >= total)
         && (!customerNameRequired || customer.trim().length > 0)
-        && (!isInstallment || (customer.trim().length > 0 && parseInt(instCount) >= 2 && downN >= 0 && downN < total));
+        && (!isInstallment || (customer.trim().length > 0 && !!instProvider && parseInt(instCount) >= 1 && downN >= 0));
     const append     = (v: string) => setTender(p => (p === "0" || p === "") ? v : p + v);
     const backspace  = () => setTender(p => p.slice(0, -1));
 
@@ -384,68 +388,93 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                         </div>
                     </div>
 
-                    {/* Installment fields */}
+                    {/* Financing details panel */}
                     {isInstallment && (
                         <div className="rounded-xl border border-primary/30 bg-primary/5 p-3.5 space-y-3">
                             <p className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-1.5">
-                                <CalendarClock className="h-3.5 w-3.5" /> Installment Details
+                                <CalendarClock className="h-3.5 w-3.5" /> Financing Details
                             </p>
+
+                            {/* Provider — required */}
+                            <div>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">
+                                    Financing Provider <span className="text-destructive">*</span>
+                                </label>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {(["home_credit","skyro","other"] as const).map(p => (
+                                        <button key={p} type="button" onClick={() => setInstProvider(p)}
+                                            className={cn("h-9 rounded-lg border text-xs font-semibold transition-all",
+                                                instProvider === p
+                                                    ? "bg-primary text-primary-foreground border-primary"
+                                                    : "border-border text-foreground hover:border-primary/40 hover:bg-accent")}>
+                                            {p === "home_credit" ? "Home Credit" : p === "skyro" ? "Skyro" : "Other"}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Reference / Application number */}
+                            <div>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Application / Reference No. <span className="text-muted-foreground/50">(optional)</span></label>
+                                <input value={instReference} onChange={e => setInstReference(e.target.value)}
+                                    placeholder="e.g. HC-2024-XXXXXX"
+                                    className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground" />
+                            </div>
 
                             {/* Customer phone */}
                             <div>
-                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Customer Phone</label>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Customer Phone <span className="text-muted-foreground/50">(optional)</span></label>
                                 <input value={instPhone} onChange={e => setInstPhone(e.target.value)}
                                     placeholder="e.g. 09XX-XXX-XXXX"
                                     className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground" />
                             </div>
 
-                            {/* Down payment */}
+                            {/* Down payment — optional, 0 = no DP */}
                             <div>
-                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Down Payment</label>
-                                <div className="flex gap-2 flex-wrap items-center">
-                                    <div className="relative flex-1 min-w-[120px]">
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Down Payment <span className="text-muted-foreground/50">(0 = no DP)</span></label>
+                                <div className="flex gap-2 items-center">
+                                    <div className="relative flex-1">
                                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">{currency}</span>
                                         <input value={instDown} onChange={e => setInstDown(e.target.value)}
-                                            type="number" min="0" max={total - 0.01} step="0.01"
+                                            type="number" min="0" step="0.01"
                                             className="w-full h-9 pl-8 pr-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground" />
                                     </div>
-                                    {[0, Math.round(total * 0.25 * 100) / 100, Math.round(total * 0.5 * 100) / 100].map((v, i) => (
-                                        <button key={i} onClick={() => setInstDown(v.toFixed(2))}
-                                            className="h-9 px-2.5 rounded-lg border border-border text-xs font-medium hover:border-primary/40 hover:bg-accent transition-colors">
-                                            {i === 0 ? "No DP" : i === 1 ? "25%" : "50%"}
+                                    <button onClick={() => setInstDown("0")}
+                                        className="h-9 px-3 rounded-lg border border-border text-xs font-medium hover:border-primary/40 hover:bg-accent transition-colors whitespace-nowrap">
+                                        No DP
+                                    </button>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Financed amount: <span className="font-semibold text-foreground">{fmtMoney(Math.max(0, total - downN), currency)}</span>
+                                </p>
+                            </div>
+
+                            {/* Terms (months) */}
+                            <div>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Terms (months)</label>
+                                <div className="grid grid-cols-5 gap-1.5">
+                                    {[3, 6, 9, 12, 18, 24, 30, 36].map(n => (
+                                        <button key={n} type="button" onClick={() => setInstCount(String(n))}
+                                            className={cn("h-9 rounded-lg border text-xs font-semibold transition-all",
+                                                instCount === String(n)
+                                                    ? "bg-primary text-primary-foreground border-primary"
+                                                    : "border-border text-foreground hover:border-primary/40 hover:bg-accent")}>
+                                            {n}mo
                                         </button>
                                     ))}
                                 </div>
-                                {downN > 0 && <p className="text-xs text-muted-foreground mt-1">Balance: {fmtMoney(Math.max(0, total - downN), currency)}</p>}
-                            </div>
-
-                            {/* Count + interval */}
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">No. of Installments</label>
-                                    <select value={instCount} onChange={e => setInstCount(e.target.value)}
-                                        className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground cursor-pointer">
-                                        {[2,3,4,5,6,9,12,18,24].map(n => (
-                                            <option key={n} value={n}>{n}x {n > 0 && downN < total ? `≈${fmtMoney(Math.round((total - downN) / n * 100) / 100, currency)}/period` : ""}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Interval</label>
-                                    <select value={instInterval} onChange={e => setInstInterval(e.target.value)}
-                                        className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground cursor-pointer">
-                                        <option value="monthly">Monthly</option>
-                                        <option value="biweekly">Bi-weekly</option>
-                                        <option value="weekly">Weekly</option>
-                                    </select>
-                                </div>
+                                {downN < total && parseInt(instCount) > 0 && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        ≈ {fmtMoney(Math.round((total - downN) / parseInt(instCount) * 100) / 100, currency)}/month
+                                    </p>
+                                )}
                             </div>
 
                             {/* Notes */}
                             <div>
-                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Notes (optional)</label>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Notes <span className="text-muted-foreground/50">(optional)</span></label>
                                 <input value={instNotes} onChange={e => setInstNotes(e.target.value)}
-                                    placeholder="e.g. collateral, terms…"
+                                    placeholder="e.g. voucher, special terms…"
                                     className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground" />
                             </div>
                         </div>
@@ -486,6 +515,13 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                     )}
                 </div>
                 <div className="px-4 pb-5 pt-3 border-t border-border shrink-0">
+                    {/* Server-side validation errors — shown inside the modal so they're never hidden */}
+                    {serverError && (
+                        <div className="mb-3 flex items-start gap-2 rounded-xl bg-destructive/10 border border-destructive/30 px-3 py-2.5 text-xs text-destructive">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <span>{serverError}</span>
+                        </div>
+                    )}
                     {isInstallment && !customer.trim() && (
                         <p className="text-xs text-destructive mb-2 flex items-center gap-1.5"><AlertTriangle className="h-3 w-3 shrink-0" />Customer name is required for installments.</p>
                     )}
@@ -497,16 +533,20 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                             discount_percent:         disc,
                             promo_id:                 appliedPromo?.id ?? null,
                             ...(isInstallment ? {
+                                installment_provider:       instProvider,
+                                installment_reference:      instReference || undefined,
                                 installment_customer_phone: instPhone || undefined,
                                 installment_down_payment:   downN,
                                 installments_count:         parseInt(instCount),
-                                installment_interval:       instInterval,
                                 installment_notes:          instNotes || undefined,
                             } : {}),
                         })}>
                         {loading ? <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" /> : (
                             isInstallment
-                                ? <><CalendarClock className="h-4 w-4" />Confirm Installment {downN > 0 ? `· DP ${fmtMoney(downN, currency)}` : "· No DP"}</>
+                                ? <><CalendarClock className="h-4 w-4" />
+                                    Record {instProvider === "home_credit" ? "Home Credit" : instProvider === "skyro" ? "Skyro" : "Financing"}
+                                    {downN > 0 ? ` · DP ${fmtMoney(downN, currency)}` : " · No DP"}
+                                  </>
                                 : <><Zap className="h-4 w-4" />Charge {fmtMoney(total, currency)}</>
                         )}
                     </Button>
@@ -810,8 +850,9 @@ export default function PosIndex() {
     const handleConfirm = (payData: {
         payment_method: PayMethod; payment_amount: number; customer_name: string;
         discount_percent: number; promo_id: number | null;
+        installment_provider?: string; installment_reference?: string;
         installment_customer_phone?: string; installment_down_payment?: number;
-        installments_count?: number; installment_interval?: string; installment_notes?: string;
+        installments_count?: number; installment_notes?: string;
     }) => {
         if (!cart.length) return;
         setLoading(true); setError(null);
@@ -824,11 +865,12 @@ export default function PosIndex() {
             promo_id:         payData.promo_id ?? null,
             cash_session_id:  session?.id ?? null,
             table_order_id:   activeTableOrderId ?? null,
-            // Installment fields (sent only when method = installment)
+            // Financing/installment fields (sent only when method = installment)
+            installment_provider:       payData.installment_provider ?? null,
+            installment_reference:      payData.installment_reference ?? null,
             installment_customer_phone: payData.installment_customer_phone ?? null,
             installment_down_payment:   payData.installment_down_payment ?? null,
             installments_count:         payData.installments_count ?? null,
-            installment_interval:       payData.installment_interval ?? null,
             installment_notes:          payData.installment_notes ?? null,
         }, {
             preserveScroll: true,
@@ -840,10 +882,9 @@ export default function PosIndex() {
                     return;
                 }
                 const r    = flash.pos_result;
-                const disc = (subtotal * payData.discount_percent) / 100;
-                const pd   = r.promo_discount ?? 0;
-                const vr   = settings?.vat_enabled && !settings?.vat_inclusive ? (settings.vat_rate ?? 0) : 0;
-                const vat  = ((subtotal - disc - pd) * vr) / 100;
+                // Use server-computed values — avoids float drift between UI and DB
+                const disc = r.discount_amount ?? 0;
+                const pd   = r.promo_discount   ?? 0;
                 const activeOrder = activeTableOrderId
                     ? open_table_orders.find(o => o.id === activeTableOrderId)
                     : null;
@@ -855,7 +896,7 @@ export default function PosIndex() {
                     payment_amount: payData.payment_amount,
                     change_amount:  r.change ?? 0,
                     discount_amount: disc + pd,
-                    total:           r.total ?? (subtotal - disc - pd + vat),
+                    total:           r.total,
                     customer_name:   payData.customer_name || null,
                     notes: [payData.discount_percent > 0 ? `Discount ${payData.discount_percent}%` : null, r.promo_name ? `Promo: ${r.promo_name}` : null].filter(Boolean).join(' | ') || null,
                     created_at:      new Date().toISOString(),
@@ -899,6 +940,13 @@ export default function PosIndex() {
                 onKeyDown={handleSearchKeyDown}
                 placeholder="Search or scan barcode… (F2)"
                 className="w-full h-9 pl-9 pr-8 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
+                // Suppress browser floating toolbars (Translate / Clipboard / Web Search)
+                // that appear on Android Chrome when text is entered via OTG barcode scanner
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                data-gramm="false"
             />
             {search
                 ? <button onClick={() => { setSearch(""); refocus(); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
@@ -954,6 +1002,11 @@ export default function PosIndex() {
                             onKeyDown={handleSearchKeyDown}
                             placeholder="Search or scan… (F2)"
                             className="w-full h-10 pl-9 pr-8 text-sm bg-white dark:bg-background border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-white/50 placeholder:text-muted-foreground shadow-sm"
+                            autoComplete="off"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            data-gramm="false"
                         />
                         {search
                             ? <button onClick={() => { setSearch(""); refocus(); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
@@ -984,18 +1037,21 @@ export default function PosIndex() {
                         customerNameRequired={requireCustomerName} promos={promos} cart={cart}
                         onConfirm={handleConfirm}
                         onClose={() => { setShowPayment(false); setError(null); refocus(50); }}
-                        loading={loading} />
+                        loading={loading} serverError={error} />
                 )}
                 {receipt && <SaleSuccessModal receipt={receipt} currency={currency} installmentPlanId={installmentPlanId} onNewSale={() => { setReceipt(null); setInstallmentPlanId(null); refocus(100); }} />}
             </div>
         );
     }
 
-    // ── Mobile: full AdminLayout with sidebar, h-[calc(100vh-4rem)] -m-6 to fill content area
+    // ── Mobile: full AdminLayout with sidebar
+    // Use dvh (dynamic viewport height) so the cart bar is never hidden behind browser chrome.
+    // Falls back gracefully to 100vh on older browsers.
     if (layout === "mobile") {
         return (
             <AdminLayout>
-                <div className="relative flex flex-col overflow-hidden h-[calc(100vh-4rem)] -m-6">
+                <div className="relative flex flex-col overflow-hidden -m-6"
+                    style={{ height: 'calc(100dvh - 4rem)' }}>
                     {noSessionOverlay}
                     <div className="shrink-0 flex items-center gap-2 border-b border-border bg-card px-4 py-2">
                         {searchInput}
@@ -1024,7 +1080,7 @@ export default function PosIndex() {
                         customerNameRequired={requireCustomerName} promos={promos} cart={cart}
                         onConfirm={handleConfirm}
                         onClose={() => { setShowPayment(false); setError(null); refocus(50); }}
-                        loading={loading} />
+                        loading={loading} serverError={error} />
                 )}
                 {receipt && <SaleSuccessModal receipt={receipt} currency={currency} installmentPlanId={installmentPlanId} onNewSale={() => { setReceipt(null); setInstallmentPlanId(null); refocus(100); }} />}
             </AdminLayout>

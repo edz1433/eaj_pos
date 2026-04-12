@@ -20,7 +20,20 @@
       "Bash(find c:xampphtdocspos/resources/js -name *date* -o -name *Date*)",
       "Bash(php -r \"require ''vendor/autoload.php''; require ''bootstrap/app.php''; require ''routes/web.php'';\")",
       "Bash(php -l app/Http/Controllers/InstallmentController.php)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(php -l app/Http/Controllers/DashboardController.php)",
+      "Bash(php -r \"echo round\\(30 * \\(5/100\\), 2\\);\")",
+      "Bash(php -l c:/xampp/htdocs/pos/app/Http/Controllers/PosController.php)",
+      "Bash(php -l c:/xampp/htdocs/pos/app/Http/Controllers/CashSessionController.php)",
+      "Bash(php -l c:/xampp/htdocs/pos/app/Http/Controllers/CashCountController.php)",
+      "Bash(icacls \"c:\\\\xampp\\\\htdocs\\\\pos\\\\resources\\\\js\\\\actions\\\\App\\\\index.ts\" /grant Everyone:F)",
+      "Bash(cmd /c \"icacls \\\\\"c:\\\\xampp\\\\htdocs\\\\pos\\\\resources\\\\js\\\\actions\\\\App\\\\index.ts\\\\\" /grant Everyone:F\")",
+      "Bash(grep -n \"taxable\\\\|vat\\\\|tax\" c:/xampp/htdocs/pos/database/migrations/*product*)",
+      "Bash(php -r \"echo date\\('Y_m_d_His'\\);\")",
+      "Bash(cmd /c \"dir c:\\\\xampp\\\\htdocs\\\\pos\\\\public | findstr storage\")",
+      "Bash(cmd /c \"dir c:\\\\xampp\\\\htdocs\\\\pos\\\\public\")",
+      "Bash(cmd /c dir \"c:\\\\xampp\\\\htdocs\\\\pos\\\\public\")",
+      "Bash(powershell -Command \"Get-Item 'C:\\\\xampp\\\\htdocs\\\\pos\\\\public\\\\storage' | Select-Object LinkType, Target, FullName\")"
     ]
   }
 }

@@ -40,6 +40,7 @@ class PosController extends Controller
         if (! $branchId && ! $user->isSuperAdmin()) abort(403, 'No branch assigned.');
 
         $session = CashSession::where('branch_id', $branchId)
+            ->where('user_id', $user->id)
             ->where('status', 'open')->latest()->first();
 
         // ── Load products for the POS screen ──────────────────────────────────
@@ -237,13 +238,14 @@ class PosController extends Controller
 
         if (! $branchId) return back()->withErrors(['error' => 'No branch assigned.']);
 
-        // Enforce cash session requirement
+        // Enforce cash session requirement — tied to the cashier's own session
         $requireSession = (bool) SystemSetting::get('pos.require_cash_session', $branchId, true);
-        if ($requireSession) {
-            $openSession = \App\Models\CashSession::where('branch_id', $branchId)->open()->first();
-            if (! $openSession) {
-                return back()->withErrors(['error' => 'No open cash session. Please open a cash session before processing sales.']);
-            }
+        $openSession = \App\Models\CashSession::where('branch_id', $branchId)
+            ->where('user_id', $user->id)
+            ->open()
+            ->first();
+        if ($requireSession && ! $openSession) {
+            return back()->withErrors(['error' => 'No open cash session. Please open a cash session before processing sales.']);
         }
 
         $validated = $request->validate([
@@ -258,30 +260,31 @@ class PosController extends Controller
             'promo_id'           => ['nullable', 'exists:promos,id'],
             'cash_session_id'    => ['nullable', 'exists:cash_sessions,id'],
             'table_order_id'     => ['nullable', 'exists:table_orders,id'],
-            // Installment fields (required when payment_method = installment)
+            // Financing / installment fields (used when payment_method = installment)
+            'installment_provider'        => ['nullable', 'in:home_credit,skyro,other'],
+            'installment_reference'       => ['nullable', 'string', 'max:100'],
             'installment_customer_phone'  => ['nullable', 'string', 'max:30'],
             'installment_down_payment'    => ['nullable', 'numeric', 'min:0'],
-            'installments_count'          => ['nullable', 'integer', 'between:2,24'],
-            'installment_interval'        => ['nullable', 'in:monthly,biweekly,weekly'],
+            'installments_count'          => ['nullable', 'integer', 'between:1,36'],
             'installment_notes'           => ['nullable', 'string', 'max:500'],
         ]);
 
-        // Extra validation for installment payment
+        // Extra validation for installment/financing payment
         if ($validated['payment_method'] === 'installment') {
             if (empty($validated['customer_name'])) {
-                return back()->withErrors(['error' => 'Customer name is required for installment sales.']);
+                return back()->withErrors(['error' => 'Customer name is required for financed sales.']);
             }
-            if (empty($validated['installments_count'])) {
-                return back()->withErrors(['error' => 'Number of installments is required.']);
+            if (empty($validated['installment_provider'])) {
+                return back()->withErrors(['error' => 'Financing provider (Home Credit / Skyro) is required.']);
             }
         }
 
         try {
             $result = DB::transaction(function () use ($validated, $user, $branchId) {
-                $settings     = SystemSetting::allForBranch($branchId);
-                $allowNeg     = (bool) ($settings['inventory.allow_negative_stock'] ?? false);
-                $subtotal     = 0;
-                $saleItems    = [];
+                $allowNeg = (bool) SystemSetting::get('inventory.allow_negative_stock', $branchId, false);
+                $subtotal         = 0;
+                $taxableSubtotal  = 0;
+                $saleItems        = [];
 
                 foreach ($validated['items'] as $item) {
                     $product = Product::with([
@@ -306,6 +309,9 @@ class PosController extends Controller
 
                     $line      = round($unitPrice * $saleQty, 2);
                     $subtotal += $line;
+                    if ($product->is_taxable) {
+                        $taxableSubtotal += $line;
+                    }
                     $saleItems[] = [
                         'product_id'         => $item['id'],
                         'product_variant_id' => $item['variant_id'] ?? null,
@@ -316,7 +322,7 @@ class PosController extends Controller
                 }
 
                 // Percentage discount
-                $maxDisc  = (float) ($settings['pos.max_discount_percent'] ?? 100);
+                $maxDisc  = (float) SystemSetting::get('pos.max_discount_percent', $branchId, 100);
                 $discPct  = min((float) ($validated['discount_percent'] ?? 0), $maxDisc);
                 $discAmt  = round($subtotal * ($discPct / 100), 2);
 
@@ -334,12 +340,15 @@ class PosController extends Controller
 
                 $afterDisc = round($subtotal - $discAmt - $promoAmt, 2);
 
-                // VAT
-                $vatEnabled  = (bool)  ($settings['tax.vat_enabled']   ?? false);
-                $vatRate     = (float) ($settings['tax.vat_rate']      ?? 0);
-                $vatInclusive= (bool)  ($settings['tax.vat_inclusive'] ?? true);
-                $vatAmt      = ($vatEnabled && $vatRate > 0 && ! $vatInclusive)
-                    ? round($afterDisc * ($vatRate / 100), 2) : 0;
+                // VAT — only applied to taxable items' portion of the total
+                $vatEnabled   = (bool)  SystemSetting::get('tax.vat_enabled',   $branchId, false);
+                $vatRate      = (float) SystemSetting::get('tax.vat_rate',       $branchId, 0);
+                $vatInclusive = (bool)  SystemSetting::get('tax.vat_inclusive',  $branchId, true);
+                // Compute how much of the post-discount total is taxable (proportional)
+                $taxableFraction     = $subtotal > 0 ? ($taxableSubtotal / $subtotal) : 0;
+                $taxableAfterDisc    = round($afterDisc * $taxableFraction, 2);
+                $vatAmt              = ($vatEnabled && $vatRate > 0 && ! $vatInclusive)
+                    ? round($taxableAfterDisc * ($vatRate / 100), 2) : 0;
 
                 $totalDue       = $afterDisc + $vatAmt;
                 $isInstallment  = $validated['payment_method'] === 'installment';
@@ -357,7 +366,7 @@ class PosController extends Controller
                     'receipt_number'  => $this->generateReceiptNumber($branchId),
                     'user_id'         => $user->id,
                     'branch_id'       => $branchId,
-                    'cash_session_id' => $validated['cash_session_id'] ?? null,
+                    'cash_session_id' => $openSession?->id ?? $validated['cash_session_id'] ?? null,
                     'table_order_id'  => $validated['table_order_id']  ?? null,
                     'payment_method'  => $validated['payment_method'],
                     'payment_amount'  => $paid,
@@ -376,30 +385,31 @@ class PosController extends Controller
                         ->update(['status' => 'closed', 'sale_id' => $sale->id]);
                 }
 
-                // ── Create installment plan if payment method is installment ──
+                // ── Create financing record if payment method is installment ──
                 $installmentPlanId = null;
                 if ($isInstallment) {
-                    $balance      = round($totalDue - ($downPayment ?? 0), 2);
-                    $instCount    = (int) ($validated['installments_count'] ?? 1);
-                    $instAmount   = $instCount > 0 ? round($balance / $instCount, 2) : $balance;
-                    $interval     = $validated['installment_interval'] ?? 'monthly';
-                    $nextDueDate  = \App\Models\InstallmentPlan::computeNextDue($interval);
+                    $downPaymentAmt = max(0, (float) ($validated['installment_down_payment'] ?? 0));
+                    $balance        = round($totalDue - $downPaymentAmt, 2);
+                    $instCount      = max(1, (int) ($validated['installments_count'] ?? 3));
+                    $instAmount     = $instCount > 0 ? round($balance / $instCount, 2) : $balance;
 
                     $plan = \App\Models\InstallmentPlan::create([
                         'sale_id'            => $sale->id,
                         'branch_id'          => $branchId,
                         'user_id'            => $user->id,
+                        'provider'           => $validated['installment_provider'] ?? 'other',
+                        'reference_number'   => $validated['installment_reference'] ?? null,
                         'customer_name'      => $validated['customer_name'],
                         'customer_phone'     => $validated['installment_customer_phone'] ?? null,
                         'total_amount'       => $totalDue,
-                        'down_payment'       => $downPayment ?? 0,
+                        'down_payment'       => $downPaymentAmt,
                         'balance'            => $balance,
                         'installment_amount' => $instAmount,
                         'total_paid'         => 0,
                         'installments_count' => $instCount,
                         'paid_count'         => 0,
-                        'interval'           => $interval,
-                        'next_due_date'      => $balance > 0 ? $nextDueDate : null,
+                        'interval'           => 'monthly',
+                        'next_due_date'      => $balance > 0 ? now()->addMonth() : null,
                         'status'             => $balance > 0 ? 'active' : 'completed',
                         'notes'              => $validated['installment_notes'] ?? null,
                     ]);
@@ -476,12 +486,18 @@ class PosController extends Controller
         return Inertia::render('Pos/History', [
             'sales'    => $sales->through(fn ($s) => $this->mapSale($s, brief: true)),
             'summary'  => [
-                'total_sales'    => (float) $base->sum('total'),
-                'total_count'    => $base->count(),
-                'cash_total'     => (float) (clone $base)->where('payment_method', 'cash')->sum('total'),
-                'gcash_total'    => (float) (clone $base)->where('payment_method', 'gcash')->sum('total'),
-                'card_total'     => (float) (clone $base)->where('payment_method', 'card')->sum('total'),
-                'discount_total' => (float) (clone $base)->sum('discount_amount'),
+                // For installment sales only the down-payment was collected at POS; use payment_amount for those
+                'total_sales'       => (float) (clone $base)
+                    ->selectRaw('SUM(CASE WHEN payment_method = "installment" THEN payment_amount ELSE total END) as collected')
+                    ->value('collected')
+                    + \App\Models\InstallmentPayment::totalsForRange($from, $to, $branchId)['total'],
+                'total_count'       => $base->count(),
+                'cash_total'        => (float) (clone $base)->where('payment_method', 'cash')->sum('total'),
+                'gcash_total'       => (float) (clone $base)->where('payment_method', 'gcash')->sum('total'),
+                'card_total'        => (float) (clone $base)->where('payment_method', 'card')->sum('total'),
+                'installment_dp'    => (float) (clone $base)->where('payment_method', 'installment')->sum('payment_amount'),
+                'remittance_total'  => \App\Models\InstallmentPayment::totalsForRange($from, $to, $branchId)['total'],
+                'discount_total'    => (float) (clone $base)->sum('discount_amount'),
             ],
             'filters'  => [
                 'search'         => $search,
@@ -541,8 +557,7 @@ class PosController extends Controller
 
         try {
             DB::transaction(function () use ($sale, $validated, $branchId) {
-                $settings = SystemSetting::allForBranch($branchId);
-                $allowNeg = (bool) ($settings['inventory.allow_negative_stock'] ?? false);
+                $allowNeg = (bool) SystemSetting::get('inventory.allow_negative_stock', $branchId, false);
 
                 // Restore old stock (type-aware for bundles and MTO)
                 $sale->load([
@@ -680,6 +695,7 @@ class PosController extends Controller
             'barcode'      => $p->barcode,
             'product_img'  => $p->product_img ? asset('storage/' . $p->product_img) : null,
             'product_type' => $p->product_type,
+            'is_taxable'   => (bool) $p->is_taxable,
             'price'        => (float) ($stock?->price ?? 0),
             'stock'        => $displayStock,
             'category'     => $p->category ? ['id' => $p->category->id, 'name' => $p->category->name] : null,

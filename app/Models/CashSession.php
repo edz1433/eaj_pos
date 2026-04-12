@@ -21,6 +21,12 @@ class CashSession extends Model
         'expected_cash',
         'counted_cash',
         'over_short',
+        'gcash_system',
+        'gcash_counted',
+        'gcash_over_short',
+        'card_system',
+        'card_counted',
+        'card_over_short',
         'status',
         'notes',
         'opened_at',
@@ -28,12 +34,18 @@ class CashSession extends Model
     ];
 
     protected $casts = [
-        'opening_cash'  => 'decimal:2',
-        'expected_cash' => 'decimal:2',
-        'counted_cash'  => 'decimal:2',
-        'over_short'    => 'decimal:2',
-        'opened_at'     => 'datetime',
-        'closed_at'     => 'datetime',
+        'opening_cash'     => 'decimal:2',
+        'expected_cash'    => 'decimal:2',
+        'counted_cash'     => 'decimal:2',
+        'over_short'       => 'decimal:2',
+        'gcash_system'     => 'decimal:2',
+        'gcash_counted'    => 'decimal:2',
+        'gcash_over_short' => 'decimal:2',
+        'card_system'      => 'decimal:2',
+        'card_counted'     => 'decimal:2',
+        'card_over_short'  => 'decimal:2',
+        'opened_at'        => 'datetime',
+        'closed_at'        => 'datetime',
     ];
 
     protected $attributes = [
@@ -94,13 +106,50 @@ class CashSession extends Model
     public function isOpen(): bool   { return $this->status === 'open'; }
     public function isClosed(): bool { return $this->status === 'closed'; }
 
-    /** Total cash sales in this session (excludes voided) */
+    /**
+     * Cash in the physical drawer = cash method sales + installment down-payments.
+     * Installment DP is real cash handed over at POS even though payment_method = 'installment'.
+     */
     public function getCashSalesTotalAttribute(): float
     {
-        return (float) $this->sales()
+        $cashSales = (float) $this->sales()
             ->where('payment_method', 'cash')
             ->where('status', '!=', 'voided')
             ->sum('total');
+
+        $instDp = (float) $this->sales()
+            ->where('payment_method', 'installment')
+            ->where('status', '!=', 'voided')
+            ->sum('payment_amount'); // payment_amount = DP for installment
+
+        return $cashSales + $instDp;
+    }
+
+    /** Total GCash sales in this session (POS only, excludes voided) */
+    public function getGcashSalesTotalAttribute(): float
+    {
+        return (float) $this->sales()
+            ->where('payment_method', 'gcash')
+            ->where('status', '!=', 'voided')
+            ->sum('total');
+    }
+
+    /** Total card sales in this session (POS only, excludes voided) */
+    public function getCardSalesTotalAttribute(): float
+    {
+        return (float) $this->sales()
+            ->where('payment_method', 'card')
+            ->where('status', '!=', 'voided')
+            ->sum('total');
+    }
+
+    /** Installment down-payments collected this session */
+    public function getInstallmentDpTotalAttribute(): float
+    {
+        return (float) $this->sales()
+            ->where('payment_method', 'installment')
+            ->where('status', '!=', 'voided')
+            ->sum('payment_amount');
     }
 
     /** Total petty cash paid out during this session */
@@ -109,7 +158,7 @@ class CashSession extends Model
         return (float) $this->pettyCashExpenses()->sum('amount');
     }
 
-    /** Expected cash = opening_cash + cash sales - petty cash paid out */
+    /** Expected cash in drawer = opening_cash + (cash sales + installment DPs) - petty cash paid out */
     public function computeExpectedCash(): float
     {
         return round(
