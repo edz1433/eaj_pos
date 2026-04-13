@@ -244,6 +244,11 @@ export const routes = {
         adjustStock: (id: Id) => route('warehouses.stock.adjust', { warehouse: id }),
     },
 
+    // ── Brochure Builder — ID 37 ─────────────────────────────────────────────
+    brochure: {
+        index: () => route('brochure.index'),
+    },
+
     // ── Stock Count (Physical Inventory) — ID 36 ─────────────────────────────
     stockCount: {
         index:  ()       => route('stock-count.index'),

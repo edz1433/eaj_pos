@@ -33,7 +33,8 @@
       "Bash(cmd /c \"dir c:\\\\xampp\\\\htdocs\\\\pos\\\\public | findstr storage\")",
       "Bash(cmd /c \"dir c:\\\\xampp\\\\htdocs\\\\pos\\\\public\")",
       "Bash(cmd /c dir \"c:\\\\xampp\\\\htdocs\\\\pos\\\\public\")",
-      "Bash(powershell -Command \"Get-Item 'C:\\\\xampp\\\\htdocs\\\\pos\\\\public\\\\storage' | Select-Object LinkType, Target, FullName\")"
+      "Bash(powershell -Command \"Get-Item 'C:\\\\xampp\\\\htdocs\\\\pos\\\\public\\\\storage' | Select-Object LinkType, Target, FullName\")",
+      "Bash(npm install:*)"
     ]
   }
 }

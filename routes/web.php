@@ -32,6 +32,7 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\StockTransferController;
 use App\Http\Controllers\WarehouseController;
 use App\Http\Controllers\StockCountController;
+use App\Http\Controllers\BrochureController;
 
 // PUBLIC
 Route::middleware('guest')->group(function () {
@@ -269,6 +270,11 @@ Route::middleware('auth')->group(function () {
         Route::patch('/{warehouse}/toggle', 'toggle')->name('toggle');
         Route::delete('/{warehouse}', 'destroy')->name('destroy');
         Route::post('/{warehouse}/stock', 'adjustStock')->name('stock.adjust');
+    });
+
+    // Brochure Builder — ID 37
+    Route::middleware('access:37')->prefix('brochure')->name('brochure.')->group(function () {
+        Route::get('/', [BrochureController::class, 'index'])->name('index');
     });
 
     // Promos

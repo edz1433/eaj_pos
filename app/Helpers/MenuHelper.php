@@ -47,6 +47,7 @@ class MenuHelper
             '34' => 'Stock Transfers',
             '35' => 'Warehouses',
             '36' => 'Stock Count',
+            '37' => 'Brochure Builder',
         ];
     }
 
@@ -94,6 +95,7 @@ class MenuHelper
                 '34' => 'Stock Transfers',
                 '35' => 'Warehouses',
                 '36' => 'Stock Count',
+                '37' => 'Brochure Builder',
             ],
             'Cash' => [
                 '14' => 'Cash Sessions',

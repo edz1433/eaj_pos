@@ -74,6 +74,7 @@ import {
     ArrowLeftRight,
     Warehouse,
     ClipboardCheck,
+    BookImage,
 } from "lucide-react";
 
 import {
@@ -130,6 +131,7 @@ const MENU = {
     STOCK_TRANSFERS:    "34",
     WAREHOUSES:         "35",
     STOCK_COUNT:        "36",
+    BROCHURE:           "37",
 } as const;
 
 // ─── Sidebar section header ───────────────────────────────────────────────────
@@ -356,7 +358,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                     )}
 
                                     {/* ── INVENTORY ─────────────────────── */}
-                                    {(has(MENU.PRODUCTS) || has(MENU.PURCHASE_ORDERS) || has(MENU.STOCK_ADJUSTMENTS) || has(MENU.INVENTORY) || has(MENU.STOCK_TRANSFERS) || has(MENU.WAREHOUSES) || has(MENU.STOCK_COUNT)) && (
+                                    {(has(MENU.PRODUCTS) || has(MENU.PURCHASE_ORDERS) || has(MENU.STOCK_ADJUSTMENTS) || has(MENU.INVENTORY) || has(MENU.STOCK_TRANSFERS) || has(MENU.WAREHOUSES) || has(MENU.STOCK_COUNT) || has(MENU.BROCHURE)) && (
                                         <>
                                             <SidebarSectionLabel label="Inventory" />
                                             {has(MENU.INVENTORY) && (
@@ -364,6 +366,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                             )}
                                             {has(MENU.STOCK_COUNT) && (
                                                 <NavItem href="/stock-count" icon={ClipboardCheck} label="Stock Count" active={isActive("/stock-count")} />
+                                            )}
+                                            {has(MENU.BROCHURE) && (
+                                                <NavItem href="/brochure" icon={BookImage} label="Brochure Builder" active={isActive("/brochure")} />
                                             )}
                                             {has(MENU.PRODUCTS) && (
                                                 <NavItem

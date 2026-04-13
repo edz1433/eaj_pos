@@ -722,9 +722,9 @@ export default function UsersIndex() {
                                                 <div className="flex items-center gap-2">
                                                     <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden w-20">
                                                         <div className="bg-primary h-full rounded-full transition-all"
-                                                            style={{ width: `${Math.min(100, (user.access.length / 29) * 100)}%` }} />
+                                                            style={{ width: `${Math.min(100, (user.access.length / menuIds.length) * 100)}%` }} />
                                                     </div>
-                                                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">{user.access.length}/29</span>
+                                                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">{user.access.length}/{menuIds.length}</span>
                                                 </div>
                                             </td>
 
