@@ -53,10 +53,11 @@ interface DashData {
         transactions: number; txn_change: number | null;
         avg_daily: number; void_count: number; void_total: number;
         discount_total: number; stock_loss_value: number;
+        credit_collected?: number; credit_outstanding?: number;
     };
     daily_sales: { date: string; revenue: number; expenses: number; transactions: number; discounts: number }[];
     hourly_sales: { hour: number; label: string; revenue: number; transactions: number }[];
-    payment_mix: { method: string; count: number; revenue: number }[];
+    payment_mix: { method: string; count: number | null; revenue: number }[];
     top_products: { name: string; revenue: number; qty_sold: number }[];
     stock_health: { inStock: number; lowStock: number; outStock: number };
     low_stock_items: { name: string; stock: number; status: string }[];
@@ -394,7 +395,7 @@ export default function Dashboard() {
     const hourlyLabels  = data?.hourly_sales.map(h => h.label)     ?? [];
     const hourlyRevenue = data?.hourly_sales.map(h => h.revenue)   ?? [];
 
-    const paymentLabels  = data?.payment_mix.map(p => p.method.charAt(0).toUpperCase() + p.method.slice(1)) ?? [];
+    const paymentLabels  = data?.payment_mix.map(p => p.method === "credit_payments" ? "Credit payments" : p.method.charAt(0).toUpperCase() + p.method.slice(1)) ?? [];
     const paymentCounts  = data?.payment_mix.map(p => p.count)   ?? [];
     const paymentRevenue = data?.payment_mix.map(p => p.revenue) ?? [];
 
@@ -604,6 +605,8 @@ export default function Dashboard() {
                     {[
                         { title: "Avg Daily Revenue", value: kpis ? fmtMoney(kpis.avg_daily, true) : "—",          icon: BarChart2,    accent: "sky"    as const },
                         { title: "Total Discounts",   value: kpis ? fmtMoney(kpis.discount_total, true) : "—",     icon: Receipt,     accent: "purple" as const },
+                        { title: "Credit Collected",   value: kpis ? fmtMoney(kpis.credit_collected ?? 0, true) : "—", icon: Wallet, accent: "green" as const, href: has("39") ? "/customers" : undefined },
+                        { title: "Credit Outstanding", value: kpis ? fmtMoney(kpis.credit_outstanding ?? 0, true) : "—", icon: Clock, accent: "amber" as const, href: has("39") ? "/customers" : undefined },
                         { title: "Voided Sales",      value: kpis ? `${fmtNum(kpis.void_count)} txns` : "—",       icon: ClipboardList, accent: "amber" as const },
                         { title: "Voided Value",      value: kpis ? fmtMoney(kpis.void_total, true) : "—",          icon: TrendingDown, accent: "red"   as const },
                         { title: "Stock Loss Value",  value: kpis ? fmtMoney(kpis.stock_loss_value, true) : "—",   icon: PackageX,    accent: "amber"  as const, href: has("31") ? "/reports/stock-loss" : undefined },

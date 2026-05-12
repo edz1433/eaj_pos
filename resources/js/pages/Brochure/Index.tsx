@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Head, usePage } from "@inertiajs/react";
 import { QRCodeSVG } from "qrcode.react";
 import AdminLayout from "@/layouts/AdminLayout";
@@ -454,22 +454,41 @@ export default function BrochureIndex() {
         const root = document.getElementById("__bro_print");
         if (!root || pages.length === 0) return;
 
-        // Grab all stylesheet <link> tags from the current page so Tailwind classes
-        // and other styles work identically in the new window.
-        const styleLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
-            .map(l => `<link rel="stylesheet" href="${l.href}">`)
-            .join("\n");
+        // Clone the hidden brochure into a temporary visible container so the
+        // browser resolves all CSS (including layout / computed colours) before
+        // we serialise.  The container is off-screen so the user never sees it.
+        const tmp = root.cloneNode(true) as HTMLElement;
+        tmp.style.cssText = "position:fixed;top:-99999px;left:-99999px;display:block;";
+        document.body.appendChild(tmp);
 
-        // Grab any inline <style> blocks (e.g. CSS variables / dark-mode tokens).
-        const inlineStyles = Array.from(document.querySelectorAll("style"))
-            .map(s => `<style>${s.textContent}</style>`)
-            .join("\n");
+        // Allow one frame for the browser to paint / resolve images.
+        requestAnimationFrame(() => {
+            const content = tmp.innerHTML;
+            document.body.removeChild(tmp);
 
-        const win = window.open("", "_blank");
-        if (!win) return;
+            // Collect every stylesheet <link> so Tailwind + app CSS is available.
+            const styleLinks = Array.from(
+                document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
+            )
+                .map(l => `<link rel="stylesheet" href="${l.href}">`)
+                .join("\n");
 
-        const html = `<!DOCTYPE html>
-<html>
+            // Collect inline <style> blocks (runtime-injected CSS-var overrides, etc.).
+            const inlineStyles = Array.from(document.querySelectorAll("style"))
+                .map(s => `<style>${s.textContent}</style>`)
+                .join("\n");
+
+            // Preserve colour-theme & dark-mode from <html> so data-theme CSS
+            // variables and .dark selectors activate in the new window.
+            const htmlEl  = document.documentElement;
+            const theme   = htmlEl.getAttribute("data-theme") ?? "";
+            const htmlCls = htmlEl.className ?? "";
+
+            const win = window.open("", "_blank");
+            if (!win) return;
+
+            const html = `<!DOCTYPE html>
+<html class="${htmlCls}" ${theme ? `data-theme="${theme}"` : ""}>
 <head>
 <meta charset="utf-8"/>
 <title>${shop_name} — Brochure</title>
@@ -477,7 +496,8 @@ export default function BrochureIndex() {
 ${styleLinks}
 ${inlineStyles}
 <style>
-  body{background:#e5e7eb!important;margin:0;padding:16px 0}
+  *{box-sizing:border-box}
+  body{background:#e5e7eb!important;margin:0;padding:24px 0;font-family:'Segoe UI',Inter,Arial,sans-serif}
   #__bro_print{display:block!important}
   .brochure-a4-page{
     display:block;margin:24px auto;
@@ -485,23 +505,23 @@ ${inlineStyles}
     page-break-after:always;break-after:page
   }
   .brochure-a4-page:last-child{page-break-after:avoid;break-after:avoid;margin-bottom:48px}
+  /* force colour printing */
   @media print{
     *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-    body{background:#fff!important;padding:0}
+    body{background:#fff!important;padding:0!important}
     .brochure-a4-page{margin:0!important;box-shadow:none!important}
     @page{size:A4;margin:0}
   }
 </style>
 </head>
 <body>
-<div id="__bro_print">
-${root.innerHTML}
-</div>
+<div id="__bro_print">${content}</div>
 </body>
 </html>`;
 
-        win.document.write(html);
-        win.document.close();
+            win.document.write(html);
+            win.document.close();
+        });
     }, [pages, shop_name]);
 
     const curLayout = LAYOUTS.find(l => l.id === layout)!;

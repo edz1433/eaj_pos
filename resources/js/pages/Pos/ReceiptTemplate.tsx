@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { usePage } from "@inertiajs/react";
 import { Printer, Download } from "lucide-react";
 import { fmtDate } from "@/lib/date";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,10 @@ export interface ReceiptData {
     status: string;
     payment_method: string;
     payment_amount: number;
+    amount_paid?: number;
+    balance_due?: number;
+    payment_status?: string;
+    due_date?: string | null;
     change_amount: number;
     discount_amount: number;
     total: number;
@@ -49,6 +54,7 @@ export const fmtMoney = (n: number, symbol = "₱") =>
 
 const methodLabel: Record<string, string> = {
     cash: "Cash", gcash: "GCash", card: "Card", others: "Others", installment: "Installment",
+    credit: "Credit", mixed: "Partial payment",
 };
 
 const businessFooter: Record<string, string> = {
@@ -71,11 +77,15 @@ const businessFooter: Record<string, string> = {
 // ─── ReceiptTemplate ─────────────────────────────────────────────────────────
 export default function ReceiptTemplate({ sale, currency = "₱", showActions = true, compact = false, className }: Props) {
     const printRef = useRef<HTMLDivElement>(null);
+    const settings = (usePage().props as any).settings ?? {};
 
     const subtotal = sale.items.reduce((s, i) => s + i.price * i.quantity, 0);
     const isVoided = sale.status === "voided";
     const isDineIn = !!sale.table_label;
-    const footer   = businessFooter[sale.business_type ?? ""] ?? "Thank you for your purchase!";
+    const footer   = settings.receipt_footer || businessFooter[sale.business_type ?? ""] || "Thank you for your purchase!";
+    const header   = settings.receipt_header || "";
+    const paid     = sale.amount_paid ?? sale.payment_amount;
+    const balance  = sale.balance_due ?? Math.max(0, sale.total - paid);
 
     // ── Print ──────────────────────────────────────────────────────
     const handlePrint = () => {
@@ -132,10 +142,11 @@ export default function ReceiptTemplate({ sale, currency = "₱", showActions = 
         lines.push("================================");
         lines.push(sale.branch_name?.toUpperCase() ?? "RECEIPT");
         if (sale.branch_code) lines.push(sale.branch_code);
+        if (header) lines.push(header);
         lines.push("================================");
         lines.push(fmtDate(sale.created_at, "MMM d, yyyy  h:mm a"));
         lines.push(`Receipt: ${sale.receipt_number}`);
-        lines.push(`Cashier: ${sale.cashier}`);
+        if (settings.show_cashier_on_receipt !== false) lines.push(`Cashier: ${sale.cashier}`);
         if (sale.customer_name) lines.push(`Customer: ${sale.customer_name}`);
         if (isDineIn)           lines.push(`Table: ${sale.table_label}`);
         lines.push("--------------------------------");
@@ -149,7 +160,9 @@ export default function ReceiptTemplate({ sale, currency = "₱", showActions = 
             lines.push(pad("Discount", `-${fmtMoney(sale.discount_amount, currency)}`));
         }
         lines.push(pad("TOTAL", fmtMoney(sale.total, currency)));
-        lines.push(pad(`Payment (${methodLabel[sale.payment_method] ?? sale.payment_method})`, fmtMoney(sale.payment_amount, currency)));
+        lines.push(pad(`Payment (${methodLabel[sale.payment_method] ?? sale.payment_method})`, fmtMoney(paid, currency)));
+        if (balance > 0) lines.push(pad("Balance", fmtMoney(balance, currency)));
+        if (sale.due_date) lines.push(`Due: ${sale.due_date}`);
         if (sale.change_amount > 0) lines.push(pad("Change", fmtMoney(sale.change_amount, currency)));
         lines.push("================================");
         lines.push("  " + footer + "  ");
@@ -176,6 +189,9 @@ export default function ReceiptTemplate({ sale, currency = "₱", showActions = 
                     {sale.branch_code && (
                         <p className="small text-[10px] text-muted-foreground">{sale.branch_code}</p>
                     )}
+                    {header && (
+                        <p className="small text-[10px] text-muted-foreground">{header}</p>
+                    )}
                     <p className="text-[11px] text-muted-foreground">
                         {fmtDate(sale.created_at, "MMMM d, yyyy  h:mm a")}
                     </p>
@@ -194,10 +210,12 @@ export default function ReceiptTemplate({ sale, currency = "₱", showActions = 
                         <span className="text-muted-foreground">Receipt</span>
                         <span className="font-semibold text-foreground font-mono">{sale.receipt_number}</span>
                     </div>
-                    <div className="flex justify-between text-[11px]">
-                        <span className="text-muted-foreground">Cashier</span>
-                        <span className="text-foreground">{sale.cashier}</span>
-                    </div>
+                    {settings.show_cashier_on_receipt !== false && (
+                        <div className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground">Cashier</span>
+                            <span className="text-foreground">{sale.cashier}</span>
+                        </div>
+                    )}
                     {sale.customer_name && (
                         <div className="flex justify-between text-[11px]">
                             <span className="text-muted-foreground">Customer</span>
@@ -262,8 +280,26 @@ export default function ReceiptTemplate({ sale, currency = "₱", showActions = 
                         <span className="text-muted-foreground">
                             Payment ({methodLabel[sale.payment_method] ?? sale.payment_method})
                         </span>
-                        <span className="text-foreground tabular-nums">{fmtMoney(sale.payment_amount, currency)}</span>
+                        <span className="text-foreground tabular-nums">{fmtMoney(paid, currency)}</span>
                     </div>
+                    {balance > 0 && (
+                        <div className="flex justify-between text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                            <span>Balance</span>
+                            <span className="tabular-nums">{fmtMoney(balance, currency)}</span>
+                        </div>
+                    )}
+                    {sale.payment_status && sale.payment_status !== "paid" && (
+                        <div className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground">Credit status</span>
+                            <span className="text-foreground capitalize">{sale.payment_status}</span>
+                        </div>
+                    )}
+                    {sale.due_date && (
+                        <div className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground">Due date</span>
+                            <span className="text-foreground">{sale.due_date}</span>
+                        </div>
+                    )}
                     {sale.change_amount > 0 && (
                         <div className="flex justify-between text-[11px] font-semibold text-green-600 dark:text-green-400">
                             <span>Change</span>

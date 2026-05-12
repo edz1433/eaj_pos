@@ -20,6 +20,11 @@ interface SaleRow extends ReceiptData {
     id: number;
     item_count: number;
     table_label?: string | null;
+    amount_paid: number;
+    balance_due: number;
+    payment_status: string;
+    due_date?: string | null;
+    customer?: { id: number; name: string } | null;
 }
 interface PaginatedSales {
     data: SaleRow[]; current_page: number; last_page: number;
@@ -30,6 +35,7 @@ interface Summary {
     total_sales: number; total_count: number;
     cash_total: number; gcash_total: number; card_total: number;
     installment_dp: number; remittance_total: number; discount_total: number;
+    credit_paid: number; credit_balance: number;
 }
 interface Branch { id: number; name: string; business_type: string; }
 interface PageProps {
@@ -61,6 +67,8 @@ function MethodChip({ method }: { method: string }) {
         cash:   { label: "Cash",   color: "bg-green-50  text-green-700  dark:bg-green-900/20  dark:text-green-400",  icon: Banknote   },
         gcash:  { label: "GCash",  color: "bg-blue-50   text-blue-700   dark:bg-blue-900/20   dark:text-blue-400",   icon: Smartphone },
         card:   { label: "Card",   color: "bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400", icon: CreditCard },
+        credit: { label: "Credit", color: "bg-amber-50  text-amber-700  dark:bg-amber-900/20  dark:text-amber-400",  icon: CalendarClock },
+        mixed:  { label: "Partial",color: "bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400", icon: Banknote },
         others: { label: "Others", color: "bg-muted     text-muted-foreground",                                       icon: Tag        },
     };
     const m = map[method] ?? map.others;
@@ -195,6 +203,10 @@ export default function PosHistory() {
         ...((summary.installment_dp + (summary.remittance_total ?? 0)) > 0 ? [
         { label: "Financing DP & Remittance", value: fmtMoney(summary.installment_dp + (summary.remittance_total ?? 0), currency), icon: CalendarClock, color: "bg-orange-50  text-orange-600  dark:bg-orange-950/30  dark:text-orange-400" },
         ] : []),
+        ...((summary.credit_paid ?? 0) > 0 || (summary.credit_balance ?? 0) > 0 ? [
+        { label: "Credit Collected", value: fmtMoney(summary.credit_paid ?? 0, currency), icon: Banknote, color: "bg-emerald-50  text-emerald-600  dark:bg-emerald-950/30  dark:text-emerald-400" },
+        { label: "Credit Balance", value: fmtMoney(summary.credit_balance ?? 0, currency), icon: CalendarClock, color: "bg-amber-50  text-amber-600  dark:bg-amber-950/30  dark:text-amber-400" },
+        ] : []),
         { label: "Discounts",      value: fmtMoney(summary.discount_total, currency),  icon: Tag,            color: "bg-amber-50   text-amber-600   dark:bg-amber-950/30   dark:text-amber-400"   },
     ];
 
@@ -202,7 +214,7 @@ export default function PosHistory() {
     const baseCols = ["Receipt", "Date"];
     if (showTableCol)    baseCols.push("Table");
     if (showCustomerCol) baseCols.push("Customer");
-    baseCols.push("Method", "Items", "Total", "Status", "");
+    baseCols.push("Method", "Items", "Total", "Collected", "Balance", "Status", "");
 
     return (
         <AdminLayout>
@@ -285,6 +297,8 @@ export default function PosHistory() {
                             <option value="gcash">GCash</option>
                             <option value="card">Card</option>
                             <option value="others">Others</option>
+                            <option value="credit">Credit</option>
+                            <option value="mixed">Partial</option>
                         </select>
                         {is_admin ? (
                             <div className="min-w-[240px]">
@@ -310,7 +324,7 @@ export default function PosHistory() {
                                     {baseCols.map(h => (
                                         <th key={h} className={cn(
                                             "px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-widest",
-                                            h === "Total" || h === "" ? "text-right" : "text-left",
+                                            h === "Total" || h === "Collected" || h === "Balance" || h === "" ? "text-right" : "text-left",
                                             h === "Date"     ? "hidden sm:table-cell" : "",
                                             h === "Customer" ? "hidden md:table-cell" : "",
                                             h === "Items"    ? "hidden lg:table-cell" : "",
@@ -353,7 +367,7 @@ export default function PosHistory() {
                                         )}
                                         {showCustomerCol && (
                                             <td className="px-4 py-3 hidden md:table-cell">
-                                                <p className="text-sm text-foreground">{sale.customer_name ?? "Walk-in"}</p>
+                                                <p className="text-sm text-foreground">{sale.customer?.name ?? sale.customer_name ?? "Walk-in"}</p>
                                             </td>
                                         )}
                                         <td className="px-4 py-3">
@@ -369,6 +383,18 @@ export default function PosHistory() {
                                                     −{fmtMoney(sale.discount_amount, currency)}
                                                 </p>
                                             )}
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                            <p className="font-semibold tabular-nums text-foreground">{fmtMoney(sale.amount_paid ?? sale.payment_amount, currency)}</p>
+                                            {sale.payment_status && sale.payment_status !== "paid" && (
+                                                <p className="text-[10px] text-muted-foreground capitalize">{sale.payment_status}</p>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                            <p className={cn("font-semibold tabular-nums", (sale.balance_due ?? 0) > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+                                                {fmtMoney(sale.balance_due ?? 0, currency)}
+                                            </p>
+                                            {sale.due_date && <p className="text-[10px] text-muted-foreground">Due {sale.due_date}</p>}
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                             <span className={cn("badge text-[10px] font-bold capitalize",

@@ -21,6 +21,7 @@ import { User, Lock, Eye, EyeOff, LogIn } from 'lucide-react';
 
 interface LoginProps {
   errors?: Record<string, string>;
+  business_name?: string;
   logo_url?: string | null;
 }
 
@@ -29,8 +30,9 @@ interface LoginFormData {
   password: string;
 }
 
-export default function Login({ errors: serverErrors, logo_url: propLogoUrl }: LoginProps) {
-  const { props } = usePage<{ app?: { logo_url?: string | null } }>();
+export default function Login({ errors: serverErrors, business_name: propBusinessName, logo_url: propLogoUrl }: LoginProps) {
+  const { props } = usePage<{ app?: { name?: string; logo_url?: string | null } }>();
+  const businessName = propBusinessName ?? props.app?.name ?? 'POS';
   const logo_url = propLogoUrl ?? props.app?.logo_url ?? null;
   const [showPassword, setShowPassword] = useState(false);
   const { setTheme } = useTheme();
@@ -52,7 +54,7 @@ export default function Login({ errors: serverErrors, logo_url: propLogoUrl }: L
 
   return (
     <>
-      <Head title="EAJ POS || Login" />
+      <Head title="Login" />
 
       <div className="min-h-screen flex items-center justify-center bg-muted/40 px-4 sm:px-6 lg:px-8 py-6">
         <Card className="w-full max-w-md shadow-2xl rounded-3xl overflow-hidden border border-border bg-card">
@@ -66,7 +68,7 @@ export default function Login({ errors: serverErrors, logo_url: propLogoUrl }: L
             <div className="flex justify-center mb-1">
               <img
                 src={logo_url ?? "/uploads/ease-logo.png"}
-                alt="Logo"
+                alt={businessName}
                 className="h-28 w-auto object-contain drop-shadow-sm"
               />
             </div>

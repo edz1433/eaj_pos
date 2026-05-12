@@ -62,7 +62,7 @@ const PRESETS: Record<string, {
         // 18=Daily Summary, 19=Sales Report, 20=Inventory Report,
         // 22=Activity Logs, 23=Users, 27=Expense Categories, 28=System Settings
         // 33=Inventory, 36=Stock Count
-        ids: ["1","2","3","6","7","14","15","16","17","18","19","20","22","23","27","28","33","36"],
+        ids: ["1","2","3","6","7","14","15","16","17","18","19","20","22","23","27","28","33","36","38","39"],
         aiChat: false,
     },
     Advance: {
@@ -75,7 +75,7 @@ const PRESETS: Record<string, {
         // 25=Branches, 29=Promos, 30=Ingredient Usage, 31=Losses/Damages, 32=Installments
         // 33=Inventory, 34=Stock Transfers, 36=Stock Count
         ids: ["1","2","3","6","7","8","9","10","11","12","13","14","15","16","17",
-              "18","19","20","21","22","23","24","25","27","28","29","30","31","32","33","34","36"],
+              "18","19","20","21","22","23","24","25","27","28","29","30","31","32","33","34","36","38","39"],
         aiChat: true,
     },
     Premium: {
@@ -86,7 +86,7 @@ const PRESETS: Record<string, {
         // Advance + 4=Table Orders, 5=Shop Orders, 26=Dining Tables
         // 33=Inventory, 34=Stock Transfers, 35=Warehouses, 36=Stock Count
         ids: ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17",
-              "18","19","20","21","22","23","24","25","26","27","28","29","30","31","32","33","34","35","36","37"],
+              "18","19","20","21","22","23","24","25","26","27","28","29","30","31","32","33","34","35","36","37","38","39"],
         aiChat: true,
     },
 };
@@ -172,6 +172,9 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
     branchId: number | null;
 }) {
     const isReadonly = def.is_readonly || (def.super_only && !isSuper);
+    const optionLabel = (option: string) => option
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, ch => ch.toUpperCase());
 
     const renderInput = () => {
         // Detect boolean by value when type is missing/unknown (old DB rows)
@@ -203,7 +206,7 @@ function SettingRow({ def, value, onChange, onReset, isSuper, branchId }: {
         if (resolvedType === "select" && def.options) {
             return (
                 <select value={value} disabled={isReadonly} onChange={e => onChange(e.target.value)} className={cn(sel, "w-48", isReadonly && "opacity-40 cursor-not-allowed")}>
-                    {def.options.map(o => <option key={o} value={o}>{o}</option>)}
+                    {def.options.map(o => <option key={o} value={o}>{optionLabel(o)}</option>)}
                 </select>
             );
         }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Branch;
 use App\Models\CashSession;
+use App\Models\CustomerPayment;
 use App\Models\Expense;
 use App\Models\InstallmentPayment;
 use App\Models\InstallmentPlan;
@@ -137,7 +138,15 @@ class AiAssistantController extends Controller
      */
     private function collectedExpr(): string
     {
-        return "SUM(CASE WHEN payment_method = 'installment' THEN payment_amount ELSE total END)";
+        return "SUM(CASE WHEN payment_method = 'installment' THEN amount_paid WHEN payment_method IN ('credit','mixed') THEN 0 ELSE total END)";
+    }
+
+    private function customerPaymentsTotal(?int $branchId, string $from, string $to): float
+    {
+        return (float) CustomerPayment::query()
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->whereBetween('payment_date', [$from, $to])
+            ->sum('amount');
     }
 
     /**
@@ -235,7 +244,8 @@ class AiAssistantController extends Controller
             ->first();
 
         $remit    = $this->remittanceTotals($branchId, now()->toDateString());
-        $revenue  = (float) ($data->revenue ?? 0) + $remit['total'];
+        $creditPayments = $this->customerPaymentsTotal($branchId, now()->toDateString(), now()->toDateString());
+        $revenue  = (float) ($data->revenue ?? 0) + $remit['total'] + $creditPayments;
         $avgTxn   = $count > 0 ? (float) ($data->revenue ?? 0) / $count : 0;
 
         $items = [
@@ -257,6 +267,10 @@ class AiAssistantController extends Controller
             if ($remit['gcash'] > 0) $items[] = ['label' => '   GCash',      'value' => $this->fmt($remit['gcash'], $currency)];
             if ($remit['card']  > 0) $items[] = ['label' => '   Card',       'value' => $this->fmt($remit['card'],  $currency)];
             if ($remit['bank']  > 0) $items[] = ['label' => '   Bank/Check', 'value' => $this->fmt($remit['bank'],  $currency)];
+        }
+
+        if ($creditPayments > 0) {
+            $items[] = ['label' => 'Customer Credit Payments', 'value' => $this->fmt($creditPayments, $currency)];
         }
 
         return ['text' => "Here's your sales summary for today (" . now()->format('M d, Y') . "):", 'items' => $items];
@@ -295,7 +309,8 @@ class AiAssistantController extends Controller
             ->selectRaw('COUNT(*) as count, ' . $this->collectedExpr() . ' as revenue, SUM(discount_amount) as discounts')
             ->first();
 
-        $revenue = (float) ($data->revenue ?? 0);
+        $creditPayments = $this->customerPaymentsTotal($branchId, $from->toDateString(), $to->toDateString());
+        $revenue = (float) ($data->revenue ?? 0) + $creditPayments;
         $count   = (int)   ($data->count   ?? 0);
         $avgDaily = $count > 0 ? $revenue / max(1, now()->dayOfWeek ?: 7) : 0;
 
@@ -326,7 +341,8 @@ class AiAssistantController extends Controller
             ->whereBetween('expense_date', [$from->toDateString(), $to->toDateString()])
             ->sum('amount');
 
-        $revenue  = (float) ($data->revenue ?? 0);
+        $creditPayments = $this->customerPaymentsTotal($branchId, $from->toDateString(), $to->toDateString());
+        $revenue  = (float) ($data->revenue ?? 0) + $creditPayments;
         $net      = $revenue - $expenses;
         $daysSoFar = now()->day;
 
@@ -371,7 +387,8 @@ class AiAssistantController extends Controller
             ->value('total') ?? 0);
 
         $remit = $this->remittanceTotals($branchId, $today);
-        $total = $revenue + $remit['total'];
+        $creditPayments = $this->customerPaymentsTotal($branchId, $today, $today);
+        $total = $revenue + $remit['total'] + $creditPayments;
         $net   = $total - $expenses - $lossValue;
 
         $items = [
@@ -397,6 +414,9 @@ class AiAssistantController extends Controller
             if ($remit['card']  > 0) $items[] = ['label' => '     Card',       'value' => $this->fmt($remit['card'],  $currency)];
             if ($remit['bank']  > 0) $items[] = ['label' => '     Bank/Check', 'value' => $this->fmt($remit['bank'],  $currency)];
         }
+        if ($creditPayments > 0) {
+            $items[] = ['label' => '   Customer Credit Payments', 'value' => $this->fmt($creditPayments, $currency)];
+        }
 
         $items[] = ['label' => '💸 Expenses',    'value' => '− ' . $this->fmt($expenses, $currency)];
         $items[] = ['label' => '📉 Stock Losses','value' => '− ' . $this->fmt($lossValue, $currency)];
@@ -411,12 +431,14 @@ class AiAssistantController extends Controller
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', now()->startOfDay())
             ->selectRaw('payment_method, COUNT(*) as count,
-                SUM(CASE WHEN payment_method = \'installment\' THEN payment_amount ELSE total END) as collected')
+                ' . $this->collectedExpr() . ' as collected')
             ->groupBy('payment_method')
             ->orderByDesc('collected')
             ->get();
 
-        if ($rows->isEmpty()) return ['text' => "No sales yet today to show payment method breakdown."];
+        $creditPayments = $this->customerPaymentsTotal($branchId, now()->toDateString(), now()->toDateString());
+
+        if ($rows->isEmpty() && $creditPayments <= 0) return ['text' => "No sales yet today to show payment method breakdown."];
 
         $total = $rows->sum(fn ($r) => (float) $r->collected);
 
@@ -447,6 +469,10 @@ class AiAssistantController extends Controller
                 $total += $remit[$m];
                 $items[] = ['label' => $remitLabels[$m], 'value' => $this->fmt($remit[$m], $currency), 'badge' => 'Remit'];
             }
+        }
+        if ($creditPayments > 0) {
+            $total += $creditPayments;
+            $items[] = ['label' => 'Customer credit payments', 'value' => $this->fmt($creditPayments, $currency), 'badge' => 'Credit'];
         }
 
         $items[] = ['label' => '📋 Total Collected', 'value' => $this->fmt($total, $currency), 'badge' => 'Total'];
@@ -841,6 +867,7 @@ class AiAssistantController extends Controller
                 ->where('created_at', '>=', $today)
                 ->selectRaw($this->collectedExpr() . ' as collected')
                 ->value('collected');
+            $revenue += $this->customerPaymentsTotal($b->id, now()->toDateString(), now()->toDateString());
             return [
                 'label' => $b->name,
                 'value' => $this->fmt($revenue, $currency),

@@ -443,7 +443,7 @@ class ProductController extends Controller
             'name'         => ['bail', 'required', 'string', 'max:255'],
             'barcode'      => ['nullable', 'string', 'max:255', 'unique:products,barcode'],
             'product_img'  => ['sometimes', 'nullable', 'image', 'mimes:jpeg,png,jpg,gif,webp', 'max:5120'],
-            'product_type' => ['nullable', 'string', 'in:standard,made_to_order,bundle'],
+            'product_type' => ['nullable', 'string', 'in:standard,made_to_order,bundle,service'],
             'category_id'  => ['bail', 'required', 'exists:categories,id'],
             'branch_id'    => $isAdmin
                 ? ['bail', 'required', 'exists:branches,id']
@@ -529,7 +529,7 @@ class ProductController extends Controller
             'name'         => ['bail', 'required', 'string', 'max:255'],
             'barcode'      => ['nullable', 'string', 'max:255', \Illuminate\Validation\Rule::unique('products', 'barcode')->ignore($product->id)],
             'product_img'  => ['sometimes', 'nullable', 'image', 'mimes:jpeg,png,jpg,gif,webp', 'max:5120'],
-            'product_type' => ['nullable', 'string', 'in:standard,made_to_order,bundle'],
+            'product_type' => ['nullable', 'string', 'in:standard,made_to_order,bundle,service'],
             'category_id'  => ['bail', 'required', 'exists:categories,id'],
             'branch_id'    => $isAdmin
                 ? ['bail', 'required', 'exists:branches,id']

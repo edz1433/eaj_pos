@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ActivityLog;
+use App\Models\SystemSetting;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
@@ -18,9 +19,9 @@ class LoginAuthController extends Controller
 
     public function getLogin(): Response
     {
-        $logoPath = \App\Models\SystemSetting::get('general.logo', null, '');
         return Inertia::render('Login', [
-            'logo_url' => $logoPath ? asset('storage/' . $logoPath) : null,
+            'business_name' => SystemSetting::businessName(),
+            'logo_url'      => SystemSetting::logoUrl(),
         ]);
     }
 

@@ -41,6 +41,8 @@ export default function CashierLayout({ children }: { children: ReactNode }) {
     const user   = props.auth?.user;
     const branch = (props.branch as any) ?? user?.branch;
     const session = props.session as any;   // only present on POS page
+    const appName = props.app?.name ?? "POS System";
+    const appLogo = props.app?.logo_url ?? null;
 
     const isActive = (href: string) => {
         const h = href.replace(/\/$/, "");
@@ -67,19 +69,23 @@ export default function CashierLayout({ children }: { children: ReactNode }) {
 
     return (
         <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
-            <Head>
-                <title>{(props as any).title ?? "POS"}</title>
-                <link rel="icon" href="/favicon.ico" />
+            <Head title={(props as any).title ?? ""}>
+                {appLogo && <link rel="icon" href={appLogo} />}
+                {appLogo && <link rel="apple-touch-icon" href={appLogo} />}
             </Head>
 
             {/* ── Top bar (h-12) ───────────────────────────────────── */}
             <header className="shrink-0 h-12 bg-card border-b border-border flex items-center justify-between px-4 gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                    <div className="shrink-0 h-7 w-7 flex items-center justify-center rounded-md bg-primary text-primary-foreground">
-                        <span className="font-bold text-xs">P</span>
+                    <div className="shrink-0 h-7 w-7 flex items-center justify-center rounded-md bg-primary text-primary-foreground overflow-hidden">
+                        {appLogo ? (
+                            <img src={appLogo} alt={appName} className="h-full w-full object-contain bg-background" />
+                        ) : (
+                            <span className="font-bold text-xs">{appName.charAt(0).toUpperCase()}</span>
+                        )}
                     </div>
                     <span className="font-semibold text-sm truncate">
-                        {branch?.name ?? "POS System"}
+                        {branch?.name ?? appName}
                     </span>
                     {/* Session status — only shown when POS passes it as a prop */}
                     {session !== undefined && (

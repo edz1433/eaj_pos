@@ -18,28 +18,40 @@ class Sale extends Model
         'branch_id',
         'cash_session_id',
         'table_order_id',   // null for walk-up / takeout, set for dine-in
+        'customer_id',
         'total',
         'payment_method',
         'payment_amount',
+        'amount_paid',
+        'balance_due',
+        'payment_status',
+        'due_date',
         'change_amount',
         'discount_amount',
         'customer_name',
         'status',
+        'credit_notes',
         'notes',
     ];
 
-    // payment_method allowed values: cash | gcash | card | others | installment
+    // payment_method allowed values: cash | gcash | card | others | installment | credit | mixed
 
     protected $casts = [
         'total'           => 'decimal:2',
         'payment_amount'  => 'decimal:2',
+        'amount_paid'     => 'decimal:2',
+        'balance_due'     => 'decimal:2',
         'change_amount'   => 'decimal:2',
         'discount_amount' => 'decimal:2',
+        'due_date'        => 'date',
     ];
 
     protected $attributes = [
         'status'          => 'completed',
         'discount_amount' => 0.00,
+        'amount_paid'     => 0.00,
+        'balance_due'     => 0.00,
+        'payment_status'  => 'paid',
     ];
 
     // ── Relationships ──────────────────────────────────────────────
@@ -48,8 +60,10 @@ class Sale extends Model
     public function branch(): BelongsTo           { return $this->belongsTo(Branch::class); }
     public function cashSession(): BelongsTo      { return $this->belongsTo(CashSession::class); }
     public function tableOrder(): BelongsTo       { return $this->belongsTo(TableOrder::class); }
+    public function customer(): BelongsTo         { return $this->belongsTo(Customer::class); }
     public function items(): HasMany              { return $this->hasMany(SaleItem::class); }
     public function installmentPlan(): HasOne     { return $this->hasOne(InstallmentPlan::class); }
+    public function customerPayments(): HasMany   { return $this->hasMany(CustomerPayment::class); }
 
     // ── Helpers ────────────────────────────────────────────────────
 
@@ -57,6 +71,19 @@ class Sale extends Model
     public function isVoided(): bool    { return $this->status === 'voided'; }
     public function isDineIn(): bool    { return $this->table_order_id !== null; }
     public function isTakeout(): bool   { return $this->table_order_id === null; }
+    public function hasCreditBalance(): bool { return (float) $this->balance_due > 0; }
+
+    public function refreshPaymentStatus(): void
+    {
+        $paid = min((float) $this->amount_paid, (float) $this->total);
+        $balance = max(0, round((float) $this->total - $paid, 2));
+
+        $this->forceFill([
+            'amount_paid'    => $paid,
+            'balance_due'    => $balance,
+            'payment_status' => $balance <= 0 ? 'paid' : ($paid > 0 ? 'partial' : 'unpaid'),
+        ])->save();
+    }
 
     // ── Accessors ──────────────────────────────────────────────────
 

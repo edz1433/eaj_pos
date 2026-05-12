@@ -11,6 +11,7 @@ use App\Models\ProductStock;
 use App\Models\Expense;
 use App\Models\Branch;
 use App\Models\SystemSetting;
+use App\Models\CustomerPayment;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -40,6 +41,14 @@ class ReportController extends Controller
         return Branch::where('is_active', true)->select('id', 'name')->get();
     }
 
+    private function reportBranding(?int $branchId): array
+    {
+        return [
+            'businessName' => SystemSetting::businessName($branchId),
+            'logoPath'     => SystemSetting::logoFilePath($branchId),
+        ];
+    }
+
     // ====================== DAILY SUMMARY ======================
     public function dailySummary(Request $request)
     {
@@ -67,8 +76,7 @@ class ReportController extends Controller
             'summary' => $summary,
             'branch' => $branch,
             'date' => Carbon::parse($date),
-            'businessName' => SystemSetting::businessName($branchId),
-        ]);
+        ] + $this->reportBranding($branchId));
 
         $pdf->setPaper('a4', 'portrait');
         return $pdf->stream("daily-summary-{$date}.pdf");
@@ -83,10 +91,10 @@ class ReportController extends Controller
         $sales = Sale::query()
             ->select([
                 'id', 'receipt_number', 'created_at', 'user_id',
-                'total', 'payment_method', 'discount_amount',
-                'customer_name'
+                'total', 'payment_method', 'payment_amount', 'amount_paid', 'balance_due', 'payment_status', 'discount_amount',
+                'customer_name', 'customer_id'
             ])
-            ->with(['user:id,fname,lname'])
+            ->with(['user:id,fname,lname', 'customer:id,name'])
             ->where('status', 'completed')
             ->when($branchId, fn($q, $id) => $q->where('branch_id', $id))
             ->when($filters['from_date'] ?? null, fn($q, $d) => $q->whereDate('created_at', '>=', $d))
@@ -113,10 +121,10 @@ class ReportController extends Controller
         $sales = Sale::query()
             ->select([
                 'id', 'receipt_number', 'created_at', 'user_id',
-                'total', 'payment_method', 'discount_amount',
-                'customer_name', 'status'
+                'total', 'payment_method', 'payment_amount', 'amount_paid', 'balance_due', 'payment_status', 'discount_amount',
+                'customer_name', 'status', 'customer_id'
             ])
-            ->with(['user:id,fname,lname'])
+            ->with(['user:id,fname,lname', 'customer:id,name'])
             ->where('status', 'completed')
             ->when($branchId, fn($q, $id) => $q->where('branch_id', $id))
             ->when($filters['from_date'] ?? null, fn($q, $d) => $q->whereDate('created_at', '>=', $d))
@@ -125,7 +133,12 @@ class ReportController extends Controller
             ->latest()
             ->get();
 
-        $totalSales = $sales->sum('total');
+        $creditPayments = CustomerPayment::query()
+            ->when($branchId, fn($q, $id) => $q->where('branch_id', $id))
+            ->when($filters['from_date'] ?? null, fn($q, $d) => $q->whereDate('payment_date', '>=', $d))
+            ->when($filters['to_date'] ?? null, fn($q, $d) => $q->whereDate('payment_date', '<=', $d))
+            ->sum('amount');
+        $totalSales = $sales->sum(fn ($sale) => in_array($sale->payment_method, ['credit', 'mixed'], true) ? 0 : ($sale->payment_method === 'installment' ? (float) $sale->amount_paid : (float) $sale->total)) + $creditPayments;
 
         $branch = $branchId ? Branch::select('id', 'name')->find($branchId) : null;
 
@@ -135,8 +148,7 @@ class ReportController extends Controller
             'branch'      => $branch,
             'from_date'   => $filters['from_date'] ?? null,
             'to_date'     => $filters['to_date'] ?? null,
-            'businessName'=> SystemSetting::businessName($filters['branch_id'] ?? null),
-        ]);
+        ] + $this->reportBranding($filters['branch_id'] ?? null));
 
         $pdf->setPaper('a4', 'landscape');
         return $pdf->stream('sales-report.pdf');
@@ -244,8 +256,7 @@ class ReportController extends Controller
         $pdf = Pdf::loadView('pdf.reports.inventory', [
             'stocks'       => $stocks,
             'branch'       => $branch,
-            'businessName' => SystemSetting::businessName($branchId),
-        ]);
+        ] + $this->reportBranding($branchId));
 
         $pdf->setPaper('a4', 'portrait');
         return $pdf->stream('inventory-report.pdf');
@@ -348,8 +359,7 @@ class ReportController extends Controller
             'fromDate' => $fromDate,
             'toDate'   => $toDate,
             'branch'   => $branch,
-            'businessName' => SystemSetting::businessName($branchId),
-        ]);
+        ] + $this->reportBranding($branchId));
 
         $pdf->setPaper('a4', 'portrait');
         return $pdf->stream('ingredient-usage-report.pdf');
@@ -412,8 +422,7 @@ class ReportController extends Controller
             'branch'       => $branch,
             'fromDate'     => $filters['from_date'] ?? null,
             'toDate'       => $filters['to_date'] ?? null,
-            'businessName' => SystemSetting::businessName($branchId),
-        ]);
+        ] + $this->reportBranding($branchId));
 
         $pdf->setPaper('a4', 'portrait');
         return $pdf->stream('expenses-report.pdf');

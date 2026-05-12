@@ -33,6 +33,8 @@ use App\Http\Controllers\StockTransferController;
 use App\Http\Controllers\WarehouseController;
 use App\Http\Controllers\StockCountController;
 use App\Http\Controllers\BrochureController;
+use App\Http\Controllers\ServicesController;
+use App\Http\Controllers\CustomerController;
 
 // PUBLIC
 Route::middleware('guest')->group(function () {
@@ -275,6 +277,23 @@ Route::middleware('auth')->group(function () {
     // Brochure Builder — ID 37
     Route::middleware('access:37')->prefix('brochure')->name('brochure.')->group(function () {
         Route::get('/', [BrochureController::class, 'index'])->name('index');
+    });
+
+    // Services — ID 38
+    Route::middleware('access:38')->prefix('services')->name('services.')->controller(ServicesController::class)->group(function () {
+        Route::get('/',              'index'  )->name('index');
+        Route::post('/',             'store'  )->name('store');
+        Route::post('/{service}',    'update' )->name('update');
+        Route::delete('/{service}',  'destroy')->name('destroy');
+    });
+
+    Route::middleware('access:39')->prefix('customers')->name('customers.')->controller(CustomerController::class)->group(function () {
+        Route::get('/', 'index')->name('index');
+        Route::post('/', 'store')->name('store');
+        Route::get('/{customer}', 'show')->name('show');
+        Route::patch('/{customer}', 'update')->name('update');
+        Route::delete('/{customer}', 'destroy')->name('destroy');
+        Route::post('/{customer}/payments', 'pay')->name('payments.store');
     });
 
     // Promos

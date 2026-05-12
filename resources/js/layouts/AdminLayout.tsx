@@ -75,6 +75,7 @@ import {
     Warehouse,
     ClipboardCheck,
     BookImage,
+    Wrench,
 } from "lucide-react";
 
 import {
@@ -132,6 +133,8 @@ const MENU = {
     WAREHOUSES:         "35",
     STOCK_COUNT:        "36",
     BROCHURE:           "37",
+    SERVICES:           "38",
+    CUSTOMERS:          "39",
 } as const;
 
 // ─── Sidebar section header ───────────────────────────────────────────────────
@@ -243,6 +246,8 @@ function SubLink({
 export default function AdminLayout({ children }: AdminLayoutProps) {
     const { props } = usePage<any>();
     const { theme, setTheme } = useTheme();
+    const appName = props.app?.name ?? "POS System";
+    const appLogo = props.app?.logo_url ?? null;
 
     // tablet / restaurant / grocery / cafe / salon → bottom static nav (no sidebar)
     // mobile → keep sidebar as normal
@@ -289,9 +294,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
                 {/* ── SIDEBAR ─────────────────────────────────────────── */}
                 <Sidebar collapsible="icon" className="border-r border-border">
-                    <Head>
-                        <title>{props.title ?? "POS"}</title>
-                        <link rel="icon" href="/favicon.ico" />
+                    <Head title={props.title ?? ""}>
+                        {appLogo && <link rel="icon" href={appLogo} />}
+                        {appLogo && <link rel="apple-touch-icon" href={appLogo} />}
                     </Head>
 
                     {/* Header / Logo */}
@@ -300,11 +305,15 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                             <SidebarMenuItem>
                                 <SidebarMenuButton size="lg" asChild>
                                     <Link href={has(MENU.DASHBOARD) ? routes.dashboard() : routes.pos.index()}>
-                                        <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                                            <span className="font-bold text-sm">P</span>
+                                        <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground overflow-hidden">
+                                            {appLogo ? (
+                                                <img src={appLogo} alt={appName} className="h-full w-full object-contain bg-background" />
+                                            ) : (
+                                                <span className="font-bold text-sm">{appName.charAt(0).toUpperCase()}</span>
+                                            )}
                                         </div>
                                         <div className="grid flex-1 text-left text-sm leading-tight">
-                                            <span className="truncate font-semibold">POS System</span>
+                                            <span className="truncate font-semibold">{appName}</span>
                                             <span className="truncate text-xs text-muted-foreground">
                                                 {props.auth?.user?.supplier?.name ?? "—"}
                                             </span>
@@ -332,7 +341,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                     )}
 
                                     {/* ── SALES ─────────────────────────── */}
-                                    {(has(MENU.POS) || has(MENU.SALES_HISTORY) || has(MENU.TABLE_ORDERS) || has(MENU.SHOP_ORDERS) || has(MENU.PROMOS) || has(MENU.INSTALLMENTS)) && (
+                                    {(has(MENU.POS) || has(MENU.SALES_HISTORY) || has(MENU.TABLE_ORDERS) || has(MENU.SHOP_ORDERS) || has(MENU.PROMOS) || has(MENU.INSTALLMENTS) || has(MENU.CUSTOMERS)) && (
                                         <>
                                             <SidebarSectionLabel label="Sales" />
 
@@ -354,11 +363,14 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                             {has(MENU.INSTALLMENTS) && (
                                                 <NavItem href="/installments" icon={CalendarClock} label="Installments" active={isActive("/installments")} />
                                             )}
+                                            {has(MENU.CUSTOMERS) && (
+                                                <NavItem href="/customers" icon={Users} label="Customers" active={isActive("/customers")} />
+                                            )}
                                         </>
                                     )}
 
                                     {/* ── INVENTORY ─────────────────────── */}
-                                    {(has(MENU.PRODUCTS) || has(MENU.PURCHASE_ORDERS) || has(MENU.STOCK_ADJUSTMENTS) || has(MENU.INVENTORY) || has(MENU.STOCK_TRANSFERS) || has(MENU.WAREHOUSES) || has(MENU.STOCK_COUNT) || has(MENU.BROCHURE)) && (
+                                    {(has(MENU.PRODUCTS) || has(MENU.PURCHASE_ORDERS) || has(MENU.STOCK_ADJUSTMENTS) || has(MENU.INVENTORY) || has(MENU.STOCK_TRANSFERS) || has(MENU.WAREHOUSES) || has(MENU.STOCK_COUNT) || has(MENU.BROCHURE) || has(MENU.SERVICES)) && (
                                         <>
                                             <SidebarSectionLabel label="Inventory" />
                                             {has(MENU.INVENTORY) && (
@@ -369,6 +381,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                             )}
                                             {has(MENU.BROCHURE) && (
                                                 <NavItem href="/brochure" icon={BookImage} label="Brochure Builder" active={isActive("/brochure")} />
+                                            )}
+                                            {has(MENU.SERVICES) && (
+                                                <NavItem href="/services" icon={Wrench} label="Services" active={isActive("/services")} />
                                             )}
                                             {has(MENU.PRODUCTS) && (
                                                 <NavItem

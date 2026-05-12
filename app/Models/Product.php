@@ -15,19 +15,24 @@ class Product extends Model
     protected $fillable = [
         'barcode',
         'name',
+        'description',
         'category_id',
         'product_img',
-        'product_type', // standard | made_to_order | bundle
+        'product_type', // standard | made_to_order | bundle | service
+        'duration_minutes',
+        'status',
         'is_taxable',
     ];
 
     protected $casts = [
         'product_type' => 'string',
+        'duration_minutes' => 'integer',
         'is_taxable'   => 'boolean',
     ];
 
     protected $attributes = [
         'product_type' => 'standard',
+        'status'       => 'active',
         'is_taxable'   => true,
     ];
 
@@ -93,6 +98,7 @@ class Product extends Model
     public function isStandard(): bool    { return $this->product_type === 'standard'; }
     public function isMadeToOrder(): bool { return $this->product_type === 'made_to_order'; }
     public function isBundle(): bool      { return $this->product_type === 'bundle'; }
+    public function isService(): bool     { return $this->product_type === 'service'; }
 
     public function hasVariants(): bool
     {
@@ -205,7 +211,12 @@ class Product extends Model
     public function scopeSellable($query)
     {
         // Products that can appear on the POS — all types except raw ingredients
-        return $query->whereIn('product_type', ['standard', 'made_to_order', 'bundle']);
+        return $query->whereIn('product_type', ['standard', 'made_to_order', 'bundle', 'service']);
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('status', 'active');
     }
 
     public function scopeInStockForBranch($query, int $branchId)

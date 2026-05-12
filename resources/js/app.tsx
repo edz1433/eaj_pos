@@ -41,10 +41,46 @@ function Providers({ children }: { children: React.ReactNode }) {
   );
 }
 
-const appName = import.meta.env.VITE_APP_NAME || 'PSIS Admin';
+type SharedApp = {
+  name?: string;
+  logo_url?: string | null;
+  color_theme?: string;
+};
+
+const fallbackAppName = import.meta.env.VITE_APP_NAME || 'PSIS Admin';
+let currentAppName = document.documentElement.dataset.appName || fallbackAppName;
+
+function setIconHref(selector: string, href: string) {
+  const link = document.querySelector<HTMLLinkElement>(selector);
+  if (link) link.href = href;
+}
+
+function syncBrand(app?: SharedApp) {
+  const previousAppName = currentAppName;
+
+  if (app?.name) {
+    currentAppName = app.name;
+    document.documentElement.dataset.appName = app.name;
+  }
+
+  document.documentElement.dataset.theme = app?.color_theme ?? 'ea';
+
+  if (app?.logo_url) {
+    setIconHref('link[rel="icon"]', app.logo_url);
+    setIconHref('link[rel="apple-touch-icon"]', app.logo_url);
+  }
+
+  if (previousAppName !== currentAppName) {
+    if (document.title === previousAppName) {
+      document.title = currentAppName;
+    } else if (document.title.endsWith(` - ${previousAppName}`)) {
+      document.title = document.title.slice(0, -previousAppName.length) + currentAppName;
+    }
+  }
+}
 
 createInertiaApp({
-  title: (title) => title || appName,
+  title: (title) => title ? `${title} - ${currentAppName}` : currentAppName,
 
   resolve: (name) =>
     resolvePageComponent(
@@ -53,10 +89,14 @@ createInertiaApp({
     ),
 
   setup({ el, App, props }) {
+    syncBrand((props.initialPage.props as any)?.app);
+
     // Sync data-theme on every Inertia navigation (after blade sets it on first load)
     router.on('navigate', (event) => {
-      const theme = (event.detail.page.props as any)?.app?.color_theme ?? 'ea';
-      document.documentElement.dataset.theme = theme;
+      syncBrand((event.detail.page.props as any)?.app);
+    });
+    router.on('success', (event) => {
+      syncBrand((event.detail.page.props as any)?.app);
     });
 
     createRoot(el).render(

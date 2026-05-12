@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Sales Report - {{ now()->format('Y-m-d') }}</title>
+    <title>{{ $businessName ?? 'Business' }} - Sales Report - {{ now()->format('Y-m-d') }}</title>
     <style>
         @page { margin: 25px; }
         body { 
@@ -17,6 +17,11 @@
             margin-bottom: 20px; 
             padding-bottom: 15px; 
             border-bottom: 3px solid #4f46e5; 
+        }
+        .logo {
+            max-height: 58px;
+            max-width: 180px;
+            margin-bottom: 8px;
         }
         .title { 
             font-size: 20px; 
@@ -57,8 +62,11 @@
 <body>
 
     <div class="header">
-        <div class="title">{{ $branch->name ?? '' }} Sales Report</div>
-        {{-- <p style="margin: 5px 0 0; font-size: 14px;">Sales Report</p> --}}
+        @if(!empty($logoPath))
+            <img class="logo" src="{{ $logoPath }}" alt="{{ $businessName ?? 'Business logo' }}">
+        @endif
+        <div class="title">{{ $businessName ?? 'Business' }}</div>
+        <p style="margin: 5px 0 0; font-size: 14px;">Sales Report{{ $branch?->name ? ' - ' . $branch->name : '' }}</p>
         <p style="margin: 3px 0 0;">
             @if(isset($from_date) && isset($to_date))
                 {{ \Carbon\Carbon::parse($from_date)->format('M d, Y') }} — {{ \Carbon\Carbon::parse($to_date)->format('M d, Y') }}
@@ -76,6 +84,8 @@
             <th>Cashier</th>
             <th>Customer</th>
             <th class="amount">Total</th>
+            <th class="amount">Collected</th>
+            <th class="amount">Balance</th>
             <th class="amount">Discount</th>
             <th class="amount">Payment</th>
         </tr>
@@ -84,17 +94,19 @@
             <td>{{ $sale->receipt_number }}</td>
             <td>{{ \Carbon\Carbon::parse($sale->created_at)->format('M d, Y h:i A') }}</td>
             <td>{{ $sale->user->full_name ?? '—' }}</td>
-            <td>{{ $sale->customer_name ?? 'Walk-in' }}</td>
+            <td>{{ $sale->customer?->name ?? $sale->customer_name ?? 'Walk-in' }}</td>
             <td class="amount">₱{{ number_format($sale->total, 2) }}</td>
+            <td class="amount">₱{{ number_format(in_array($sale->payment_method, ['credit', 'mixed']) ? $sale->amount_paid : ($sale->payment_method === 'installment' ? $sale->amount_paid : $sale->total), 2) }}</td>
+            <td class="amount">{{ $sale->balance_due > 0 ? '₱' . number_format($sale->balance_due, 2) : '—' }}</td>
             <td class="amount">{{ $sale->discount_amount > 0 ? '-₱' . number_format($sale->discount_amount, 2) : '—' }}</td>
             <td class="amount">{{ strtoupper($sale->payment_method) }}</td>
         </tr>
         @endforeach
 
         <tr class="total-row">
-            <td colspan="4" style="text-align: right;">TOTAL SALES</td>
+            <td colspan="5" style="text-align: right;">TOTAL COLLECTED</td>
             <td class="amount" style="font-size: 15px;">₱{{ number_format($total_sales ?? 0, 2) }}</td>
-            <td colspan="2"></td>
+            <td colspan="3"></td>
         </tr>
     </table>
 

@@ -34,7 +34,11 @@
       "Bash(cmd /c \"dir c:\\\\xampp\\\\htdocs\\\\pos\\\\public\")",
       "Bash(cmd /c dir \"c:\\\\xampp\\\\htdocs\\\\pos\\\\public\")",
       "Bash(powershell -Command \"Get-Item 'C:\\\\xampp\\\\htdocs\\\\pos\\\\public\\\\storage' | Select-Object LinkType, Target, FullName\")",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(npx vite:*)",
+      "Bash(php -r \"echo 'php works';\")",
+      "Bash(attrib \"c:/xampp/htdocs/pos/resources/js/routes/boost/index.ts\")",
+      "Bash(node -e \"const {execSync} = require\\('child_process'\\); try { console.log\\(execSync\\('php artisan wayfinder:generate --with-form', {encoding:'utf8'}\\)\\) } catch\\(e\\) { console.error\\(e.message\\) }\")"
     ]
   }
 }

@@ -12,7 +12,7 @@ import {
     RefreshCw, Zap, User, ChevronDown, Wallet, CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Product, CartItem, Category, TableOrder, DiningTable, ActivePromo } from "./posTypes";
+import type { Product, CartItem, Category, TableOrder, DiningTable, ActivePromo, CustomerOption } from "./posTypes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Session  { id: number; opening_cash: number; opened_at: string; status: string; }
@@ -24,9 +24,16 @@ interface PageProps {
         default_payment: string; vat_enabled: boolean;
         vat_rate: number; vat_inclusive: boolean; require_cash_session: boolean;
         enable_installments: boolean;
+        item_mode: "products_and_services" | "products_only" | "services_only";
+        laundry_mode: "auto" | "enabled" | "disabled";
+        require_customer_name: boolean;
+        default_due_days: number;
+        service_charge_enabled: boolean;
+        service_charge_rate: number;
     } | null;
     app: { currency: string };
     products: Product[];
+    customers: CustomerOption[];
     categories: Category[];
     session: Session | null;
     branch: Branch | null;
@@ -36,7 +43,7 @@ interface PageProps {
     promos: ActivePromo[];
     [key: string]: unknown;
 }
-type PayMethod   = "cash" | "gcash" | "card" | "others" | "installment";
+type PayMethod   = "cash" | "gcash" | "card" | "others" | "installment" | "credit" | "mixed";
 type LayoutMode  = "grid" | "tablet" | "grocery" | "restaurant" | "cafe" | "salon" | "kiosk" | "mobile";
 
 const METHODS: { value: PayMethod; label: string; icon: React.ElementType }[] = [
@@ -44,6 +51,8 @@ const METHODS: { value: PayMethod; label: string; icon: React.ElementType }[] = 
     { value: "gcash",       label: "GCash",       icon: Smartphone  },
     { value: "card",        label: "Card",        icon: CreditCard  },
     { value: "others",      label: "Others",      icon: Tag         },
+    { value: "credit",      label: "Credit",      icon: Wallet      },
+    { value: "mixed",       label: "Partial",     icon: Banknote    },
     { value: "installment", label: "Installment", icon: CalendarClock },
 ];
 
@@ -139,11 +148,13 @@ function VariantPicker({ product, currency, onSelect, onClose }: {
 }
 
 // ─── PaymentModal ─────────────────────────────────────────────────────────────
-function PaymentModal({ subtotal, settings, currency, customerNameRequired, promos, cart, onConfirm, onClose, loading, serverError }: {
+function PaymentModal({ subtotal, settings, currency, customers, customerNameRequired, promos, cart, onConfirm, onClose, loading, serverError }: {
     subtotal: number; settings: PageProps["settings"]; currency: string;
+    customers: CustomerOption[];
     customerNameRequired?: boolean; promos: ActivePromo[]; cart: CartItem[];
     onConfirm: (d: {
         payment_method: PayMethod; payment_amount: number; customer_name: string;
+        customer_id: number | null; due_date?: string | null; credit_notes?: string | null;
         discount_percent: number; promo_id: number | null;
         installment_provider?: string; installment_reference?: string;
         installment_customer_phone?: string; installment_down_payment?: number;
@@ -152,9 +163,13 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
     onClose: () => void; loading: boolean; serverError?: string | null;
 }) {
     const enableInstallments = settings?.enable_installments ?? false;
-    const [method,       setMethod]       = useState<PayMethod>((settings?.default_payment ?? "cash") as PayMethod);
+    const defaultMethod = ((settings?.default_payment === "installment" && !enableInstallments) ? "cash" : (settings?.default_payment ?? "cash")) as PayMethod;
+    const [method,       setMethod]       = useState<PayMethod>(defaultMethod);
     const [tender,       setTender]       = useState("");
     const [customer,     setCustomer]     = useState("");
+    const [customerId,   setCustomerId]   = useState("");
+    const [dueDate,      setDueDate]      = useState("");
+    const [creditNotes,  setCreditNotes]  = useState("");
     const [discPct,      setDiscPct]      = useState("");
     const [promoCode,    setPromoCode]    = useState("");
     const [appliedPromo, setAppliedPromo] = useState<ActivePromo | null>(null);
@@ -169,6 +184,9 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
     const [instNotes,      setInstNotes]      = useState("");
 
     const isInstallment = method === "installment";
+    const isCredit      = method === "credit";
+    const isMixed       = method === "mixed";
+    const needsRegisteredCustomer = isCredit || isMixed;
 
     const r2 = (v: number) => Math.round(v * 100) / 100; // round to 2 decimal places — matches PHP round($v, 2)
 
@@ -192,13 +210,19 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
     const afterPromo = r2(afterDisc - promoAmt);
     const vatRate    = (settings?.vat_enabled && !settings?.vat_inclusive) ? (settings.vat_rate ?? 0) : 0;
     const vatAmt     = r2(afterPromo * vatRate / 100);
-    const total      = afterPromo + vatAmt;
+    const svcRate    = settings?.service_charge_enabled ? (settings.service_charge_rate ?? 0) : 0;
+    const svcAmt     = r2(afterPromo * svcRate / 100);
+    const total      = afterPromo + vatAmt + svcAmt;
     const tenderN    = parseFloat(tender) || 0;
     const change     = Math.max(0, tenderN - total);
     const isCash     = method === "cash";
     const downN      = parseFloat(instDown) || 0;
+    const creditPaid = isCredit ? 0 : (isMixed ? tenderN : total);
+    const creditBalance = Math.max(0, total - Math.min(total, creditPaid));
     const canPay     = total > 0
         && (!isCash || tenderN >= total)
+        && (!isMixed || (tenderN > 0 && tenderN < total))
+        && (!needsRegisteredCustomer || !!customerId)
         && (!customerNameRequired || customer.trim().length > 0)
         && (!isInstallment || (customer.trim().length > 0 && !!instProvider && parseInt(instCount) >= 1 && downN >= 0));
     const append     = (v: string) => setTender(p => (p === "0" || p === "") ? v : p + v);
@@ -228,6 +252,19 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
         setAppliedPromo(p); setPromoError(""); setShowPromos(false);
     };
 
+    const selectedCustomer = customers.find(c => String(c.id) === customerId) ?? null;
+    useEffect(() => {
+        if (selectedCustomer) setCustomer(selectedCustomer.name);
+    }, [selectedCustomer]);
+
+    useEffect(() => {
+        if (!dueDate && (isCredit || isMixed) && (settings?.default_due_days ?? 0) > 0) {
+            const date = new Date();
+            date.setDate(date.getDate() + (settings?.default_due_days ?? 0));
+            setDueDate(date.toISOString().slice(0, 10));
+        }
+    }, [dueDate, isCredit, isMixed, settings?.default_due_days]);
+
     return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/40 backdrop-blur-sm">
             <div className="bg-card border border-border rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md shadow-2xl flex flex-col max-h-[92vh]">
@@ -247,6 +284,7 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                             </div>
                         )}
                         {vatAmt > 0 && <div className="flex justify-between text-muted-foreground"><span>VAT ({vatRate}%)</span><span>+{fmtMoney(vatAmt, currency)}</span></div>}
+                        {svcAmt > 0 && <div className="flex justify-between text-muted-foreground"><span>Service charge ({svcRate}%)</span><span>+{fmtMoney(svcAmt, currency)}</span></div>}
                         <div className="flex justify-between font-bold text-base text-foreground border-t border-border pt-2 mt-1"><span>Total</span><span>{fmtMoney(total, currency)}</span></div>
                     </div>
 
@@ -361,23 +399,35 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                         </div>
                     )}
 
-                    {/* Customer name */}
+                    {/* Customer */}
                     <div>
                         <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block mb-1.5">
-                            Customer name {customerNameRequired && <span className="text-destructive">*</span>}
+                            Customer {customerNameRequired && <span className="text-destructive">*</span>}
                         </label>
-                        <div className="relative">
-                            <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                            <input value={customer} onChange={e => setCustomer(e.target.value)}
-                                placeholder={customerNameRequired ? "Required for this service" : "Walk-in customer"}
-                                className="w-full h-9 pl-9 pr-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground" />
+                        <div className="space-y-2">
+                            <select value={customerId}
+                                onChange={e => setCustomerId(e.target.value)}
+                                className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground">
+                                <option value="">Walk-in / no registered customer</option>
+                                {customers.map(c => (
+                                    <option key={c.id} value={c.id}>
+                                        {c.name}{c.credit_balance > 0 ? ` - balance ${fmtMoney(c.credit_balance, currency)}` : ""}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="relative">
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                                <input value={customer} onChange={e => { setCustomer(e.target.value); if (customerId) setCustomerId(""); }}
+                                    placeholder={customerNameRequired ? "Required for this service" : "Walk-in customer name (optional)"}
+                                    className="w-full h-9 pl-9 pr-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground" />
+                            </div>
                         </div>
                     </div>
 
                     {/* Payment method */}
                     <div>
                         <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block mb-1.5">Payment method</label>
-                        <div className={cn("grid gap-1.5", enableInstallments ? "grid-cols-5" : "grid-cols-4")}>
+                        <div className={cn("grid gap-1.5", enableInstallments ? "grid-cols-4 sm:grid-cols-7" : "grid-cols-3 sm:grid-cols-6")}>
                             {METHODS.filter(m => m.value !== "installment" || enableInstallments).map(m => { const Icon = m.icon; return (
                                 <button key={m.value} onClick={() => setMethod(m.value)}
                                     className={cn("flex flex-col items-center gap-1.5 py-2.5 px-1 rounded-xl border text-[11px] font-semibold transition-all",
@@ -480,6 +530,52 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                         </div>
                     )}
 
+                    {(isCredit || isMixed) && (
+                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5 space-y-3">
+                            <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Wallet className="h-3.5 w-3.5" /> Customer Credit
+                            </p>
+                            {!customerId && (
+                                <p className="text-xs text-destructive flex items-center gap-1.5">
+                                    <AlertTriangle className="h-3 w-3 shrink-0" />Select a registered customer to save credit balance.
+                                </p>
+                            )}
+                            {isMixed && (
+                                <div>
+                                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Payment now</label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">{currency}</span>
+                                        <input value={tender} onChange={e => setTender(e.target.value)}
+                                            type="number" min="0.01" max={total - 0.01} step="0.01"
+                                            className="w-full h-9 pl-8 pr-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground" />
+                                    </div>
+                                </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded-lg bg-background border border-border p-2">
+                                    <p className="text-muted-foreground">Collected</p>
+                                    <p className="font-bold text-foreground tabular-nums">{fmtMoney(Math.min(total, creditPaid), currency)}</p>
+                                </div>
+                                <div className="rounded-lg bg-background border border-border p-2">
+                                    <p className="text-muted-foreground">Balance</p>
+                                    <p className="font-bold text-amber-700 dark:text-amber-400 tabular-nums">{fmtMoney(creditBalance, currency)}</p>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Due date</label>
+                                <input value={dueDate} onChange={e => setDueDate(e.target.value)}
+                                    type="date"
+                                    className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground" />
+                            </div>
+                            <div>
+                                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block mb-1">Credit notes</label>
+                                <input value={creditNotes} onChange={e => setCreditNotes(e.target.value)}
+                                    placeholder="Optional"
+                                    className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground" />
+                            </div>
+                        </div>
+                    )}
+
                     {/* Cash numpad */}
                     {isCash && (
                         <div>
@@ -525,11 +621,17 @@ function PaymentModal({ subtotal, settings, currency, customerNameRequired, prom
                     {isInstallment && !customer.trim() && (
                         <p className="text-xs text-destructive mb-2 flex items-center gap-1.5"><AlertTriangle className="h-3 w-3 shrink-0" />Customer name is required for installments.</p>
                     )}
+                    {needsRegisteredCustomer && !customerId && (
+                        <p className="text-xs text-destructive mb-2 flex items-center gap-1.5"><AlertTriangle className="h-3 w-3 shrink-0" />Registered customer is required for credit transactions.</p>
+                    )}
                     <Button className="w-full h-12 text-base font-bold gap-2" disabled={!canPay || loading}
                         onClick={() => onConfirm({
                             payment_method:           method,
-                            payment_amount:           isCash ? tenderN : (isInstallment ? downN : total),
+                            payment_amount:           isCash ? tenderN : (isInstallment ? downN : (isCredit ? 0 : (isMixed ? tenderN : total))),
                             customer_name:            customer,
+                            customer_id:              customerId ? Number(customerId) : null,
+                            due_date:                 dueDate || null,
+                            credit_notes:             creditNotes || null,
                             discount_percent:         disc,
                             promo_id:                 appliedPromo?.id ?? null,
                             ...(isInstallment ? {
@@ -714,7 +816,7 @@ function CartPanel({ cart, subtotal, itemCount, currency, error, onUpdateQty, on
 // ─── Main POS component ───────────────────────────────────────────────────────
 export default function PosIndex() {
     const { props }   = usePage<PageProps>();
-    const { products, categories, session, branch, settings, app, open_table_orders, dining_tables } = props;
+    const { products, customers = [], categories, session, branch, settings, app, open_table_orders, dining_tables } = props;
     const promos      = (props.promos as ActivePromo[]) ?? [];
     const user        = props.auth?.user;
     const currency    = app?.currency ?? "₱";
@@ -773,7 +875,9 @@ export default function PosIndex() {
     const subtotal  = useMemo(() => cart.reduce((s, i) => s + i.price * i.qty, 0), [cart]);
     const itemCount = useMemo(() => cart.reduce((s, i) => s + i.qty, 0), [cart]);
 
-    const requireCustomerName = branch?.business_type === "salon";
+    const laundryMode = settings?.laundry_mode ?? "auto";
+    const isLaundryMode = laundryMode === "enabled" || (laundryMode === "auto" && branch?.business_type === "laundry");
+    const requireCustomerName = !!settings?.require_customer_name || branch?.business_type === "salon" || isLaundryMode;
 
     const addItem = useCallback((product: Product, variantId: number | null = null, variantName: string | null = null) => {
         const extra     = variantId ? (product.variants.find(v => v.id === variantId)?.extra_price ?? 0) : 0;
@@ -849,6 +953,7 @@ export default function PosIndex() {
 
     const handleConfirm = (payData: {
         payment_method: PayMethod; payment_amount: number; customer_name: string;
+        customer_id: number | null; due_date?: string | null; credit_notes?: string | null;
         discount_percent: number; promo_id: number | null;
         installment_provider?: string; installment_reference?: string;
         installment_customer_phone?: string; installment_down_payment?: number;
@@ -861,6 +966,9 @@ export default function PosIndex() {
             payment_method:   payData.payment_method,
             payment_amount:   payData.payment_amount,
             customer_name:    payData.customer_name || null,
+            customer_id:      payData.customer_id,
+            due_date:         payData.due_date ?? null,
+            credit_notes:     payData.credit_notes ?? null,
             discount_percent: payData.discount_percent,
             promo_id:         payData.promo_id ?? null,
             cash_session_id:  session?.id ?? null,
@@ -894,11 +1002,19 @@ export default function PosIndex() {
                     status: "completed",
                     payment_method: payData.payment_method,
                     payment_amount: payData.payment_amount,
+                    amount_paid:     r.amount_paid ?? payData.payment_amount,
+                    balance_due:     r.balance_due ?? 0,
+                    payment_status:  r.payment_status ?? "paid",
+                    due_date:        r.due_date ?? payData.due_date ?? null,
                     change_amount:  r.change ?? 0,
                     discount_amount: disc + pd,
                     total:           r.total,
-                    customer_name:   payData.customer_name || null,
-                    notes: [payData.discount_percent > 0 ? `Discount ${payData.discount_percent}%` : null, r.promo_name ? `Promo: ${r.promo_name}` : null].filter(Boolean).join(' | ') || null,
+                    customer_name:   r.customer_name ?? (payData.customer_name || null),
+                    notes: [
+                        payData.discount_percent > 0 ? `Discount ${payData.discount_percent}%` : null,
+                        r.promo_name ? `Promo: ${r.promo_name}` : null,
+                        r.service_charge_amount > 0 ? `Service charge ${fmtMoney(r.service_charge_amount, currency)}` : null,
+                    ].filter(Boolean).join(' | ') || null,
                     created_at:      new Date().toISOString(),
                     cashier:         user ? `${user.fname} ${user.lname}` : "—",
                     branch_name:     branch?.name,
@@ -1033,7 +1149,7 @@ export default function PosIndex() {
                         onClose={() => { setVariantFor(null); refocus(50); }} />
                 )}
                 {showPayment && (
-                    <PaymentModal subtotal={subtotal} settings={settings} currency={currency}
+                    <PaymentModal subtotal={subtotal} settings={settings} currency={currency} customers={customers}
                         customerNameRequired={requireCustomerName} promos={promos} cart={cart}
                         onConfirm={handleConfirm}
                         onClose={() => { setShowPayment(false); setError(null); refocus(50); }}
@@ -1076,7 +1192,7 @@ export default function PosIndex() {
                         onClose={() => { setVariantFor(null); refocus(50); }} />
                 )}
                 {showPayment && (
-                    <PaymentModal subtotal={subtotal} settings={settings} currency={currency}
+                    <PaymentModal subtotal={subtotal} settings={settings} currency={currency} customers={customers}
                         customerNameRequired={requireCustomerName} promos={promos} cart={cart}
                         onConfirm={handleConfirm}
                         onClose={() => { setShowPayment(false); setError(null); refocus(50); }}
@@ -1159,7 +1275,7 @@ export default function PosIndex() {
                     onClose={() => { setVariantFor(null); refocus(50); }} />
             )}
             {showPayment && (
-                <PaymentModal subtotal={subtotal} settings={settings} currency={currency}
+                <PaymentModal subtotal={subtotal} settings={settings} currency={currency} customers={customers}
                     customerNameRequired={requireCustomerName} promos={promos} cart={cart}
                     onConfirm={handleConfirm}
                     onClose={() => { setShowPayment(false); setError(null); refocus(50); }}

@@ -23,7 +23,11 @@ interface Props {
       created_at: string;
       user?: { full_name: string };
       customer_name?: string;
+      customer?: { id: number; name: string } | null;
       total: number;
+      amount_paid: number;
+      balance_due: number;
+      payment_status: string;
       payment_method: string;
       discount_amount: number;
     }>;
@@ -69,7 +73,7 @@ export default function SalesReport({ sales, branches, filters: initialFilters }
     openLivePdfPreview('sales', getParams());
   };
 
-  const totalSales = sales.data.reduce((sum, sale) => sum + Number(sale.total), 0);
+  const totalSales = sales.data.reduce((sum, sale) => sum + Number(sale.amount_paid ?? sale.total), 0);
 
   return (
     <AdminLayout>
@@ -154,7 +158,7 @@ export default function SalesReport({ sales, branches, filters: initialFilters }
                   <TrendingUp className="h-4 w-4" /> Sales Transactions
                 </CardTitle>
                 <div className="text-sm text-muted-foreground">
-                  Total: <span className="font-semibold tabular-nums">₱{totalSales.toLocaleString()}</span>
+                  Collected on page: <span className="font-semibold tabular-nums">₱{totalSales.toLocaleString()}</span>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
@@ -166,6 +170,8 @@ export default function SalesReport({ sales, branches, filters: initialFilters }
                       <TableHead>Cashier</TableHead>
                       <TableHead>Customer</TableHead>
                       <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Collected</TableHead>
+                      <TableHead className="text-right">Balance</TableHead>
                       <TableHead className="text-center">Payment</TableHead>
                       <TableHead className="text-right">Discount</TableHead>
                     </TableRow>
@@ -178,12 +184,18 @@ export default function SalesReport({ sales, branches, filters: initialFilters }
                           {fmtDate(sale.created_at, "MMM d, h:mm a")}
                         </TableCell>
                         <TableCell>{sale.user?.full_name || '—'}</TableCell>
-                        <TableCell>{sale.customer_name || 'Walk-in'}</TableCell>
+                        <TableCell>{sale.customer?.name || sale.customer_name || 'Walk-in'}</TableCell>
                         <TableCell className="text-right font-semibold tabular-nums">
                           ₱{Number(sale.total).toLocaleString()}
                         </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">
+                          ₱{Number(sale.amount_paid ?? sale.total).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums text-amber-700">
+                          {Number(sale.balance_due ?? 0) > 0 ? `₱${Number(sale.balance_due).toLocaleString()}` : '—'}
+                        </TableCell>
                         <TableCell className="text-center">
-                          <Badge variant="secondary">{sale.payment_method.toUpperCase()}</Badge>
+                          <Badge variant="secondary">{sale.payment_method.toUpperCase()} {sale.payment_status !== 'paid' ? `/${sale.payment_status.toUpperCase()}` : ''}</Badge>
                         </TableCell>
                         <TableCell className="text-right text-red-600">
                           {sale.discount_amount > 0 ? `-₱${Number(sale.discount_amount).toLocaleString()}` : '—'}

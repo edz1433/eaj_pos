@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ProductType = 'standard' | 'made_to_order' | 'bundle';
+type ProductType = 'standard' | 'made_to_order' | 'bundle' | 'service';
 
 interface StockRecord {
     branch_id: number;
@@ -188,10 +188,11 @@ const statusBadge = (s: string) => ({
 const typeBadge = (t: ProductType) => ({
     bundle:        'bg-purple-500/15 text-purple-400 border border-purple-500/20',
     made_to_order: 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/20',
+    service:       'bg-blue-500/15 text-blue-400 border border-blue-500/20',
     standard:      'bg-slate-500/15 text-slate-400 border border-slate-500/20',
 }[t]);
 
-const typeLabel = (t: ProductType) => ({ bundle: 'Bundle', made_to_order: 'MTO', standard: 'Standard' }[t]);
+const typeLabel = (t: ProductType) => ({ bundle: 'Bundle', made_to_order: 'MTO', standard: 'Standard', service: 'Service' }[t]);
 
 const inp = 'w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20 transition-all';
 const sel = inp;
@@ -403,7 +404,8 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
         fd.append('barcode', barcode);
         fd.append('product_type', productType);
         fd.append('category_id', categoryId);
-        fd.append('stock', stock);
+        // Services and MTO don't track stock — always send 0
+        fd.append('stock', (productType === 'service' || productType === 'made_to_order') ? '0' : stock);
         fd.append('capital', capital);
         fd.append('markup', markup);
         fd.append('is_taxable', isTaxable ? '1' : '0');
@@ -466,6 +468,7 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
                             <option value="standard">Standard</option>
                             <option value="made_to_order">Made-to-Order</option>
                             <option value="bundle">Bundle</option>
+                            <option value="service">Service</option>
                         </select>
                     </Field>
                 </div>
@@ -498,6 +501,30 @@ function ProductFormModal({ open, onClose, product, categories, branches, isAdmi
                         <span>🍳</span>
                         <span><strong>Made-to-Order</strong> — no stock is tracked. Ingredients are deducted automatically when sold based on the recipe.</span>
                     </div>
+                ) : productType === 'service' ? (
+                    <>
+                        <div className="bg-blue-500/8 border border-blue-500/20 rounded-xl px-4 py-3 text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                            <span>🛠️</span>
+                            <span><strong>Service</strong> — no physical stock. Set the service fee below. It will appear in POS and can be sold unlimited times.</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <Field label="Capital / Cost (₱)" error={errors.capital}>
+                                <input type="number" min="0" step="0.01" className={inp} value={capital} onChange={e => setCapital(e.target.value)} placeholder="0" />
+                            </Field>
+                            <Field label="Markup (%)" error={errors.markup} hint="e.g. 20 = 20%">
+                                <input type="number" min="0" max="500" step="0.01" className={inp} value={markup} onChange={e => setMarkup(e.target.value)} placeholder="0" />
+                            </Field>
+                        </div>
+                        <Field label="Service Fee (₱)">
+                            <div className={cn(
+                                'flex items-center h-[42px] px-3 rounded-lg border text-sm font-bold tabular-nums',
+                                pricePreview ? 'border-primary/30 bg-primary/5 text-primary' : 'border-border bg-muted/30 text-muted-foreground'
+                            )}>
+                                {pricePreview ? `₱${pricePreview}` : '—'}
+                                {pricePreview && <span className="ml-auto text-[10px] font-normal text-muted-foreground">auto</span>}
+                            </div>
+                        </Field>
+                    </>
                 ) : (
                     <>
                         <div className="grid grid-cols-2 gap-3">

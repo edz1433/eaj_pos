@@ -48,6 +48,8 @@ class MenuHelper
             '35' => 'Warehouses',
             '36' => 'Stock Count',
             '37' => 'Brochure Builder',
+            '38' => 'Services',
+            '39' => 'Customers',
         ];
     }
 
@@ -80,6 +82,7 @@ class MenuHelper
                 '5'  => 'Shop Orders',
                 '29' => 'Promos & Discounts',
                 '32' => 'Installments',
+                '39' => 'Customers',
             ],
             'Inventory' => [
                 '6'  => 'All Products',
@@ -96,6 +99,7 @@ class MenuHelper
                 '35' => 'Warehouses',
                 '36' => 'Stock Count',
                 '37' => 'Brochure Builder',
+                '38' => 'Services',
             ],
             'Cash' => [
                 '14' => 'Cash Sessions',

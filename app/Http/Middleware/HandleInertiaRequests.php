@@ -64,18 +64,19 @@ class HandleInertiaRequests extends Middleware
                 ->all();
         }
 
+        $businessName = SystemSetting::businessName($branchId);
+        $logoUrl      = SystemSetting::logoUrl($branchId);
+
         return array_merge(parent::share($request), [
 
             // ── App meta ──────────────────────────────────────────
             'app' => [
-                'name'           => config('app.name'),
+                'name'           => $businessName,
                 'env'            => config('app.env'),
                 'currency'       => SystemSetting::currencySymbol(),
                 'ai_chat_enabled'=> (bool) SystemSetting::get('general.ai_chat_enabled', null, true),
                 'color_theme'    => (string) SystemSetting::get('general.color_theme', null, 'ea'),
-                'logo_url'       => SystemSetting::get('general.logo', null, '')
-                                        ? asset('storage/' . SystemSetting::get('general.logo', null, ''))
-                                        : null,
+                'logo_url'       => $logoUrl,
             ],
 
             // ── Auth ──────────────────────────────────────────────
@@ -143,6 +144,10 @@ class HandleInertiaRequests extends Middleware
                 'allow_discount'       => (bool)  SystemSetting::get('pos.allow_discount',        $branchId, true),
                 'max_discount_percent' => SystemSetting::maxDiscountPercent($branchId),
                 'default_payment'      =>          SystemSetting::get('pos.default_payment',       $branchId, 'cash'),
+                'item_mode'            =>          SystemSetting::posItemMode($branchId),
+                'laundry_mode'         =>          SystemSetting::laundryMode($branchId),
+                'require_customer_name'=>          SystemSetting::requireCustomerName($branchId),
+                'default_due_days'     =>          SystemSetting::defaultDueDays($branchId),
                 'show_product_images'  => (bool)  SystemSetting::get('pos.show_product_images',   $branchId, true),
                 'senior_pwd_discount'  => (float) SystemSetting::get('pos.senior_pwd_discount',   $branchId, 20),
                 'enable_installments'  => (bool)  SystemSetting::get('pos.enable_installments',   $branchId, false),
@@ -151,6 +156,7 @@ class HandleInertiaRequests extends Middleware
                 'vat_enabled'          => SystemSetting::vatEnabled($branchId),
                 'vat_rate'             => SystemSetting::vatRate($branchId),
                 'vat_inclusive'        => SystemSetting::vatInclusive($branchId),
+                'service_charge_enabled' => (bool) SystemSetting::get('tax.enable_service_charge', $branchId, false),
                 'service_charge_rate'  => (float) SystemSetting::get('tax.service_charge_rate',   $branchId, 0),
 
                 // Receipt
@@ -158,6 +164,7 @@ class HandleInertiaRequests extends Middleware
                 'receipt_footer'          =>        SystemSetting::get('receipt.footer_text',        $branchId, ''),
                 'show_cashier_on_receipt' => (bool) SystemSetting::get('receipt.show_cashier',       $branchId, true),
                 'receipt_copies'          => (int)  SystemSetting::get('receipt.copies',             $branchId, 1),
+                'show_vat_breakdown'      => (bool) SystemSetting::get('receipt.show_vat_breakdown', $branchId, false),
 
                 // Inventory alerts
                 'low_stock_threshold' => SystemSetting::lowStockThreshold($branchId),

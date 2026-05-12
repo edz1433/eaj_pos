@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Expenses Report - {{ now()->format('Y-m-d') }}</title>
+    <title>{{ $businessName ?? 'Business' }} - Expenses Report - {{ now()->format('Y-m-d') }}</title>
     <style>
         @page { margin: 25px; }
         body {
@@ -17,6 +17,11 @@
             margin-bottom: 20px;
             padding-bottom: 15px;
             border-bottom: 3px solid #4f46e5;
+        }
+        .logo {
+            max-height: 58px;
+            max-width: 180px;
+            margin-bottom: 8px;
         }
         .title {
             font-size: 20px;
@@ -51,8 +56,12 @@
 <body>
 
     <div class="header">
-        <div class="title">{{ $branch->name ?? $businessName ?? 'All Branches' }} - Expenses Report</div>
-        <p style="margin: 5px 0 0; font-size: 14px;">Approved Expenses</p>
+        @if(!empty($logoPath))
+            <img class="logo" src="{{ $logoPath }}" alt="{{ $businessName ?? 'Business logo' }}">
+        @endif
+        <div class="title">{{ $businessName ?? 'Business' }}</div>
+        <p style="margin: 5px 0 0; font-size: 14px;">Expenses Report{{ $branch?->name ? ' - ' . $branch->name : ' - All Branches' }}</p>
+        <p style="margin: 3px 0 0; font-size: 13px;">Approved Expenses</p>
         <p style="margin: 3px 0 0;">
             @if($fromDate && $toDate)
                 {{ \Carbon\Carbon::parse($fromDate)->format('M d, Y') }} — {{ \Carbon\Carbon::parse($toDate)->format('M d, Y') }}

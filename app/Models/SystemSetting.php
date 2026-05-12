@@ -184,7 +184,11 @@ class SystemSetting extends Model
             // ── POS behavior ──────────────────────────────────────
             ['key' => 'pos.require_cash_session','value' => 'true',                  'type' => 'boolean', 'group' => 'pos',     'label' => 'Require open cash session to sell'],
             ['key' => 'pos.allow_negative_stock','value' => 'false',                 'type' => 'boolean', 'group' => 'pos',     'label' => 'Allow sales when stock is 0'],
-            ['key' => 'pos.default_payment',     'value' => 'cash',                  'type' => 'select',  'group' => 'pos',     'label' => 'Default payment method',         'options' => '["cash","gcash","card"]'],
+            ['key' => 'pos.default_payment',     'value' => 'cash',                  'type' => 'select',  'group' => 'pos',     'label' => 'Default payment method',         'options' => '["cash","gcash","card","others","credit","mixed","installment"]'],
+            ['key' => 'pos.item_mode',           'value' => 'products_and_services', 'type' => 'select',  'group' => 'pos',     'label' => 'Cashier item mode', 'description' => 'Choose whether POS sells products, services, or both', 'options' => '["products_and_services","products_only","services_only"]'],
+            ['key' => 'pos.laundry_mode',        'value' => 'auto',                  'type' => 'select',  'group' => 'pos',     'label' => 'Laundry POS mode', 'description' => 'Auto enables laundry behavior for Laundry branches', 'options' => '["auto","enabled","disabled"]'],
+            ['key' => 'pos.require_customer_name','value' => 'false',                'type' => 'boolean', 'group' => 'pos',     'label' => 'Require customer name at checkout'],
+            ['key' => 'pos.default_due_days',    'value' => '0',                     'type' => 'integer', 'group' => 'pos',     'label' => 'Default due days for credit/laundry'],
             ['key' => 'pos.show_product_images', 'value' => 'true',                  'type' => 'boolean', 'group' => 'pos',     'label' => 'Show product images on POS'],
             ['key' => 'pos.allow_discount',      'value' => 'true',                  'type' => 'boolean', 'group' => 'pos',     'label' => 'Allow discount on sale'],
             ['key' => 'pos.max_discount_percent','value' => '20',                    'type' => 'decimal', 'group' => 'pos',     'label' => 'Max discount % allowed'],
@@ -220,7 +224,33 @@ class SystemSetting extends Model
 
     public static function businessName(?int $branchId = null): string
     {
-        return (string) static::get('general.business_name', $branchId, 'My POS');
+        return (string) static::get('general.business_name', $branchId, config('app.name', 'My POS'));
+    }
+
+    public static function logoPath(?int $branchId = null): ?string
+    {
+        $path = trim((string) static::get('general.logo', $branchId, ''));
+
+        return $path !== '' ? $path : null;
+    }
+
+    public static function logoUrl(?int $branchId = null): ?string
+    {
+        $path = static::logoPath($branchId);
+
+        return $path ? asset('storage/' . $path) : null;
+    }
+
+    public static function logoFilePath(?int $branchId = null): ?string
+    {
+        $path = static::logoPath($branchId);
+        if (! $path) {
+            return null;
+        }
+
+        $fullPath = storage_path('app/public/' . $path);
+
+        return file_exists($fullPath) ? $fullPath : null;
     }
 
     public static function currencySymbol(): string
@@ -256,6 +286,30 @@ class SystemSetting extends Model
     public static function allowNegativeStock(?int $branchId = null): bool
     {
         return (bool) static::get('pos.allow_negative_stock', $branchId, false);
+    }
+
+    public static function posItemMode(?int $branchId = null): string
+    {
+        $mode = (string) static::get('pos.item_mode', $branchId, 'products_and_services');
+        return in_array($mode, ['products_and_services', 'products_only', 'services_only'], true)
+            ? $mode
+            : 'products_and_services';
+    }
+
+    public static function laundryMode(?int $branchId = null): string
+    {
+        $mode = (string) static::get('pos.laundry_mode', $branchId, 'auto');
+        return in_array($mode, ['auto', 'enabled', 'disabled'], true) ? $mode : 'auto';
+    }
+
+    public static function requireCustomerName(?int $branchId = null): bool
+    {
+        return (bool) static::get('pos.require_customer_name', $branchId, false);
+    }
+
+    public static function defaultDueDays(?int $branchId = null): int
+    {
+        return max(0, (int) static::get('pos.default_due_days', $branchId, 0));
     }
 
     public static function maxDiscountPercent(?int $branchId = null): float

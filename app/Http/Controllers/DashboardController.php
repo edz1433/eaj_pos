@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Branch;
 use App\Models\CashSession;
+use App\Models\CustomerPayment;
 use App\Models\Expense;
 use App\Models\Order;
 use App\Models\Product;
@@ -12,6 +13,7 @@ use App\Models\InstallmentPayment;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockAdjustment;
+use App\Models\SystemSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -122,8 +124,8 @@ class DashboardController extends Controller
             ->whereBetween('installment_payments.payment_date', [$prevFrom->toDateString(), $prevTo->toDateString()]);
 
         // Regular (non-installment) sales — full total collected
-        $regularRevenue     = (float) Sale::completed()->where('payment_method', '!=', 'installment')->tap($scopeSales)->sum('total');
-        $prevRegularRevenue = (float) Sale::completed()->where('payment_method', '!=', 'installment')->tap($scopePrevSales)->sum('total');
+        $regularRevenue     = (float) Sale::completed()->whereNotIn('payment_method', ['installment', 'credit', 'mixed'])->tap($scopeSales)->sum('total');
+        $prevRegularRevenue = (float) Sale::completed()->whereNotIn('payment_method', ['installment', 'credit', 'mixed'])->tap($scopePrevSales)->sum('total');
 
         // Installment sales — only the DP collected at POS
         $instDpRevenue     = (float) Sale::completed()->where('payment_method', 'installment')->tap($scopeSales)->sum('payment_amount');
@@ -133,8 +135,17 @@ class DashboardController extends Controller
         $remittanceRevenue     = (float) InstallmentPayment::query()->tap($scopeRemittances)->sum('installment_payments.amount');
         $prevRemittanceRevenue = (float) InstallmentPayment::query()->tap($scopePrevRemittances)->sum('installment_payments.amount');
 
-        $revenue     = $regularRevenue + $instDpRevenue + $remittanceRevenue;
-        $prevRevenue = $prevRegularRevenue + $prevInstDpRevenue + $prevRemittanceRevenue;
+        $creditRevenue = (float) CustomerPayment::query()
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->whereBetween('payment_date', [$from->toDateString(), $to->toDateString()])
+            ->sum('amount');
+        $prevCreditRevenue = (float) CustomerPayment::query()
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->whereBetween('payment_date', [$prevFrom->toDateString(), $prevTo->toDateString()])
+            ->sum('amount');
+
+        $revenue     = $regularRevenue + $instDpRevenue + $remittanceRevenue + $creditRevenue;
+        $prevRevenue = $prevRegularRevenue + $prevInstDpRevenue + $prevRemittanceRevenue + $prevCreditRevenue;
         $txnCount     = Sale::completed()->tap($scopeSales)->count();
         $prevTxnCount = Sale::completed()->tap($scopePrevSales)->count();
         $voidCount    = Sale::voided()->tap($scopeSales)->count();
@@ -155,6 +166,11 @@ class DashboardController extends Controller
             ->selectRaw('SUM(quantity * unit_cost) as total')
             ->value('total') ?? 0;
 
+        $creditOutstanding = (float) Sale::completed()
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->where('balance_due', '>', 0)
+            ->sum('balance_due');
+
         $pct = fn($cur, $prev) => $prev > 0 ? round((($cur - $prev) / $prev) * 100, 1) : null;
 
         $kpis = [
@@ -171,6 +187,8 @@ class DashboardController extends Controller
             'void_total'        => $voidTotal,
             'discount_total'    => $discountTotal,
             'stock_loss_value'  => round($stockLossValue, 2),
+            'credit_collected'  => round($creditRevenue, 2),
+            'credit_outstanding'=> round($creditOutstanding ?? 0, 2),
         ];
 
         // ── Daily sales trend ─────────────────────────────────────────────────
@@ -178,7 +196,7 @@ class DashboardController extends Controller
         $dailyRows = Sale::completed()
             ->tap($scopeSales)
             ->selectRaw("DATE(created_at) as date,
-                SUM(CASE WHEN payment_method = 'installment' THEN payment_amount ELSE total END) as revenue,
+                SUM(CASE WHEN payment_method = 'installment' THEN amount_paid WHEN payment_method IN ('credit','mixed') THEN 0 ELSE total END) as revenue,
                 COUNT(*) as transactions,
                 SUM(discount_amount) as discounts")
             ->groupBy('date')
@@ -192,6 +210,14 @@ class DashboardController extends Controller
             ->when($branchId, fn($q) => $q->where('installment_plans.branch_id', $branchId))
             ->whereBetween('installment_payments.payment_date', [$from->toDateString(), $to->toDateString()])
             ->selectRaw("payment_date as date, SUM(amount) as remittances")
+            ->groupBy('payment_date')
+            ->get()
+            ->keyBy('date');
+
+        $dailyCreditRows = CustomerPayment::query()
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->whereBetween('payment_date', [$from->toDateString(), $to->toDateString()])
+            ->selectRaw("payment_date as date, SUM(amount) as customer_payments")
             ->groupBy('payment_date')
             ->get()
             ->keyBy('date');
@@ -210,7 +236,7 @@ class DashboardController extends Controller
             $d = $cursor->toDateString();
             $dailySales[] = [
                 'date'         => $d,
-                'revenue'      => (float) ($dailyRows[$d]->revenue      ?? 0) + (float) ($dailyRemitRows[$d]->remittances ?? 0),
+                'revenue'      => (float) ($dailyRows[$d]->revenue      ?? 0) + (float) ($dailyRemitRows[$d]->remittances ?? 0) + (float) ($dailyCreditRows[$d]->customer_payments ?? 0),
                 'transactions' => (int)   ($dailyRows[$d]->transactions ?? 0),
                 'discounts'    => (float) ($dailyRows[$d]->discounts    ?? 0),
                 'expenses'     => (float) ($dailyExpRows[$d]->expenses  ?? 0),
@@ -224,10 +250,17 @@ class DashboardController extends Controller
             ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
             ->where('created_at', '>=', $today)
             ->selectRaw("HOUR(created_at) as hour,
-                SUM(CASE WHEN payment_method = 'installment' THEN payment_amount ELSE total END) as revenue,
+                SUM(CASE WHEN payment_method = 'installment' THEN amount_paid WHEN payment_method IN ('credit','mixed') THEN 0 ELSE total END) as revenue,
                 COUNT(*) as transactions")
             ->groupBy('hour')
             ->orderBy('hour')
+            ->get()
+            ->keyBy('hour');
+        $hourlyCreditPayments = CustomerPayment::query()
+            ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+            ->whereDate('payment_date', today())
+            ->selectRaw("HOUR(created_at) as hour, SUM(amount) as revenue")
+            ->groupBy('hour')
             ->get()
             ->keyBy('hour');
 
@@ -236,7 +269,7 @@ class DashboardController extends Controller
             $hourlyData[] = [
                 'hour'         => $h,
                 'label'        => ($h < 12 ? $h : ($h === 12 ? 12 : $h - 12)) . ($h < 12 ? 'am' : 'pm'),
-                'revenue'      => (float) ($hourlySales[$h]->revenue      ?? 0),
+                'revenue'      => (float) ($hourlySales[$h]->revenue ?? 0) + (float) ($hourlyCreditPayments[$h]->revenue ?? 0),
                 'transactions' => (int)   ($hourlySales[$h]->transactions ?? 0),
             ];
         }
@@ -244,10 +277,13 @@ class DashboardController extends Controller
         // ── Payment mix ───────────────────────────────────────────────────────
         $paymentMix = Sale::completed()
             ->tap($scopeSales)
-            ->selectRaw("payment_method, COUNT(*) as count, SUM(total) as revenue")
+            ->selectRaw("payment_method, COUNT(*) as count, SUM(CASE WHEN payment_method = 'installment' THEN amount_paid WHEN payment_method IN ('credit','mixed') THEN 0 ELSE total END) as revenue")
             ->groupBy('payment_method')
             ->get()
             ->map(fn($r) => ['method' => $r->payment_method, 'count' => $r->count, 'revenue' => (float) $r->revenue]);
+        if ($creditRevenue > 0) {
+            $paymentMix->push(['method' => 'credit_payments', 'count' => null, 'revenue' => round($creditRevenue, 2)]);
+        }
 
         // ── Top 10 products by revenue ────────────────────────────────────────
         $topProducts = SaleItem::query()
@@ -265,7 +301,7 @@ class DashboardController extends Controller
             ->map(fn($r) => ['name' => $r->name, 'revenue' => (float) $r->revenue, 'qty_sold' => (int) $r->qty_sold]);
 
         // ── Stock health ──────────────────────────────────────────────────────
-        $lowThreshold = 5;
+        $lowThreshold = SystemSetting::lowStockThreshold($branchId);
         $stockQuery = ProductStock::when($branchId, fn($q) => $q->where('branch_id', $branchId));
         $inStock  = (clone $stockQuery)->where('stock', '>', $lowThreshold)->count();
         $lowStock = (clone $stockQuery)->where('stock', '>', 0)->where('stock', '<=', $lowThreshold)->count();

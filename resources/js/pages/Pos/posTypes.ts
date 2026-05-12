@@ -17,6 +17,9 @@ export interface Product {
     barcode: string | null;
     product_img: string | null;
     product_type: string;
+    description?: string | null;
+    duration_minutes?: number | null;
+    status?: string | null;
     price: number;
     stock: number;
     category: { id: number; name: string } | null;
@@ -73,4 +76,12 @@ export interface ActivePromo {
     product_ids: number[];
     category_ids: number[];
     expires_at: string | null;
+}
+
+export interface CustomerOption {
+    id: number;
+    name: string;
+    contact_number: string | null;
+    email: string | null;
+    credit_balance: number;
 }

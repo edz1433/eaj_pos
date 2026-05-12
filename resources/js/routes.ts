@@ -249,6 +249,23 @@ export const routes = {
         index: () => route('brochure.index'),
     },
 
+    // ── Services — ID 38 ─────────────────────────────────────────────────────
+    services: {
+        index:   ()       => route('services.index'),
+        store:   ()       => route('services.store'),
+        update:  (id: Id) => route('services.update',  { service: id }),
+        destroy: (id: Id) => route('services.destroy', { service: id }),
+    },
+
+    customers: {
+        index:   ()       => route('customers.index'),
+        store:   ()       => route('customers.store'),
+        show:    (id: Id) => route('customers.show', { customer: id }),
+        update:  (id: Id) => route('customers.update', { customer: id }),
+        destroy: (id: Id) => route('customers.destroy', { customer: id }),
+        pay:     (id: Id) => route('customers.payments.store', { customer: id }),
+    },
+
     // ── Stock Count (Physical Inventory) — ID 36 ─────────────────────────────
     stockCount: {
         index:  ()       => route('stock-count.index'),
